@@ -1,17 +1,15 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_geolocator_demo/main.dart';
 
 void main() {
-  testWidgets('renders geolocator demo screen', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: GeoHomePage(autoRefresh: false)),
-    );
+  testWidgets('renders golf scorecard screen as home', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const GolfScorecardApp());
 
-    expect(find.text('Prueba Geolocator'), findsOneWidget);
-    expect(find.text('Permiso'), findsOneWidget);
-    expect(find.text('Latitud'), findsOneWidget);
-    expect(find.text('Longitud'), findsOneWidget);
-    expect(find.text('Obtener ubicacion'), findsOneWidget);
+    expect(find.text('FORAT'), findsOneWidget);
+    expect(find.text('Signatures'), findsOneWidget);
+    expect(find.text('PREFERENCIES DE PAS'), findsOneWidget);
+    expect(find.text('marcador'), findsOneWidget);
   });
 }
