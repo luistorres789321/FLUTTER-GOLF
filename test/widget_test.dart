@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_geolocator_demo/main.dart';
+import 'package:flutter_golf/main.dart';
 
 void main() {
   testWidgets('renders golf scorecard screen as home', (
