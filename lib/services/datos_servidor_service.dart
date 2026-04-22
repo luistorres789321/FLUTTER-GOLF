@@ -1,0 +1,97 @@
+import 'dart:async';
+
+import 'package:http/http.dart' as http;
+
+class DatosServidorService {
+  DatosServidorService({
+    http.Client? client,
+    Uri? endpoint,
+    this.timeout = const Duration(seconds: 20),
+  }) : _client = client ?? http.Client(),
+       _ownsClient = client == null,
+       endpoint =
+           endpoint ??
+           Uri.parse(
+             'https://autopowersoft.com/obtenerJSON/obtenerJSON.aspx',
+           );
+
+  final http.Client _client;
+  final bool _ownsClient;
+  final Uri endpoint;
+  final Duration timeout;
+
+  Future<String> actualizaConfiguracionCampos(
+    String idCampo,
+    String parametro,
+    String valor,
+  ) {
+    return _getTexto(
+      {
+        'accion': 'actualiza_configuracion_campos',
+        'idCampo': idCampo,
+        'parametro': parametro,
+        'valor': valor,
+      },
+    );
+  }
+
+  Future<String> cojeConfiguracionCampos(
+    String idCampo,
+    String parametro,
+  ) {
+    return _getTexto(
+      {
+        'accion': 'coje_configuracion_campos',
+        'idCampo': idCampo,
+        'parametro': parametro,
+      },
+    );
+  }
+
+  Future<String> _getTexto(Map<String, String> queryParameters) async {
+    final uri = endpoint.replace(queryParameters: queryParameters);
+    final response = await _client
+        .get(uri, headers: const {'Accept': 'text/plain'})
+        .timeout(timeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw DatosServidorException(
+        message: 'La peticion al servidor ha fallado.',
+        statusCode: response.statusCode,
+        uri: uri,
+        body: response.body,
+      );
+    }
+
+    return response.body;
+  }
+
+  void close() {
+    if (_ownsClient) {
+      _client.close();
+    }
+  }
+}
+
+class DatosServidorException implements Exception {
+  const DatosServidorException({
+    required this.message,
+    required this.statusCode,
+    required this.uri,
+    required this.body,
+  });
+
+  final String message;
+  final int statusCode;
+  final Uri uri;
+  final String body;
+
+  @override
+  String toString() {
+    return 'DatosServidorException('
+        'message: $message, '
+        'statusCode: $statusCode, '
+        'uri: $uri'
+        ')';
+  }
+}

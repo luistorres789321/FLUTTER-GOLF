@@ -9,17 +9,47 @@ const _emptySummary = ['', '', ''];
 
 const _guideRows = [
   _ScoreRowData(
-    label: 'AMARILLAS',
+    label: 'metres',
     tone: _RowTone.yellow,
-    frontValues: ['', '', '', '', '', '', '', '', ''],
-    backValues: ['', '', '', '', '', '', '', '', ''],
+    frontValues: ['94', '116', '80', '84', '56', '70', '56', '88', '105'],
+    frontTotal: '749',
+    backValues: ['74', '85', '64', '83', '77', '90', '101', '91', '62'],
+    backTotal: '727',
     summaryValues: _emptySummary,
   ),
   _ScoreRowData(
-    label: 'ROJAS',
+    label: 'handicap',
+    frontValues: ['8', '2', '17', '12', '18', '7', '14', '11', '4'],
+    backValues: ['13', '10', '16', '1', '15', '9', '5', '6', '3'],
+    summaryValues: _emptySummary,
+  ),
+  _ScoreRowData(
+    label: 'metres EPPA',
     tone: _RowTone.red,
-    frontValues: ['', '', '', '', '', '', '', '', ''],
-    backValues: ['', '', '', '', '', '', '', '', ''],
+    frontValues: ['73', '90', '65', '74', '56', '62', '56', '66', '76'],
+    frontTotal: '618',
+    backValues: ['62', '65', '57', '53', '53', '77', '90', '77', '46'],
+    backTotal: '580',
+    summaryValues: _emptySummary,
+  ),
+  _ScoreRowData(
+    label: 'handicap EPPA',
+    frontValues: ['55', '3', '18', '10', '15', '8', '11', '9', '12'],
+    backValues: ['16', '14', '7', '4', '17', '5', '1', '6', '2'],
+    summaryValues: _emptySummary,
+  ),
+  _ScoreRowData(
+    label: 'metres BLANC',
+    frontValues: ['73', '90', '65', '74', '56', '62', '56', '66', '76'],
+    frontTotal: '618',
+    backValues: ['74', '65', '64', '83', '53', '77', '90', '77', '62'],
+    backTotal: '645',
+    summaryValues: _emptySummary,
+  ),
+  _ScoreRowData(
+    label: 'handicap BLANC',
+    frontValues: ['14', '11', '18', '7', '15', '16', '17', '6', '9'],
+    backValues: ['4', '13', '3', '1', '12', '8', '5', '10', '2'],
     summaryValues: _emptySummary,
   ),
 ];
@@ -71,11 +101,11 @@ const _formFields = [
 const _preferenceColumns = [
   _PreferenceColumnData(
     title: 'CABALLEROS',
-    items: ['AMARILLAS', 'ROJAS', 'STABLEFORD'],
+    items: ['metres', 'metres EPPA', 'STABLEFORD'],
   ),
   _PreferenceColumnData(
     title: 'DAMAS',
-    items: ['AMARILLAS', 'ROJAS', 'MEDAL PLAY'],
+    items: ['metres', 'metres EPPA', 'MEDAL PLAY'],
   ),
 ];
 
@@ -332,29 +362,29 @@ class _GridDataRow extends StatelessWidget {
             _GridCell.data(
               width: GolfScorecardScreen._holeWidth,
               tone: row.tone,
-              child: _ValueText(value, weight: row.valueWeight),
+              child: _ValueText(value),
             ),
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
             tone: row.tone,
-            child: _ValueText(row.frontTotal, weight: row.valueWeight),
+            child: _ValueText(row.frontTotal),
           ),
           const _FoldCell(),
           for (final value in row.backValues)
             _GridCell.data(
               width: GolfScorecardScreen._holeWidth,
               tone: row.tone,
-              child: _ValueText(value, weight: row.valueWeight),
+              child: _ValueText(value),
             ),
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
             tone: row.tone,
-            child: _ValueText(row.backTotal, weight: row.valueWeight),
+            child: _ValueText(row.backTotal),
           ),
           for (final value in row.summaryValues)
             _GridCell.summary(
               width: GolfScorecardScreen._summaryWidth,
-              child: _ValueText(value, weight: row.valueWeight),
+              child: _ValueText(value),
             ),
         ],
       ),
@@ -882,10 +912,9 @@ class _RowLabel extends StatelessWidget {
 }
 
 class _ValueText extends StatelessWidget {
-  const _ValueText(this.value, {this.weight});
+  const _ValueText(this.value);
 
   final String value;
-  final FontWeight? weight;
 
   @override
   Widget build(BuildContext context) {
@@ -898,7 +927,6 @@ class _ValueText extends StatelessWidget {
       textAlign: TextAlign.center,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontWeight: weight),
     );
   }
 }
@@ -908,6 +936,8 @@ class _ScoreRowData {
     required this.label,
     required this.frontValues,
     required this.backValues,
+    this.frontTotal = '',
+    this.backTotal = '',
     this.summaryValues = _emptySummary,
     this.tone = _RowTone.base,
     this.height = 44,
@@ -916,12 +946,11 @@ class _ScoreRowData {
   final String label;
   final List<String> frontValues;
   final List<String> backValues;
-  final String frontTotal = '';
-  final String backTotal = '';
+  final String frontTotal;
+  final String backTotal;
   final List<String> summaryValues;
   final _RowTone tone;
   final double height;
-  final FontWeight? valueWeight = null;
 }
 
 class _FormFieldData {
