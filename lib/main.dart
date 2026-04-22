@@ -19,6 +19,7 @@ class GolfScorecardApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: Colors.transparent,
+        fontFamily: 'Trebuchet MS',
         textTheme: ThemeData.light().textTheme.apply(
           bodyColor: textColor,
           displayColor: textColor,

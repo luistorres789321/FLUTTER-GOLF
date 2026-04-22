@@ -7,46 +7,20 @@ const _backNine = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 const _summaryHeaders = ['TOTAL', 'HCP JUEGO', 'NETO'];
 const _emptySummary = ['', '', ''];
 
-const _teeRows = [
+const _guideRows = [
   _ScoreRowData(
-    label: 'AMARILLES',
-    subtitle: 'Slope 140  |  V.C. 70,6',
+    label: 'AMARILLAS',
     tone: _RowTone.yellow,
-    frontValues: [
-      '159',
-      '349',
-      '240',
-      '321',
-      '203',
-      '487',
-      '338',
-      '306',
-      '400',
-    ],
-    frontTotal: '2803',
-    backValues: ['159', '349', '240', '321', '203', '487', '338', '306', '400'],
-    backTotal: '2803',
-    summaryValues: ['5606', '', ''],
+    frontValues: ['', '', '', '', '', '', '', '', ''],
+    backValues: ['', '', '', '', '', '', '', '', ''],
+    summaryValues: _emptySummary,
   ),
   _ScoreRowData(
     label: 'ROJAS',
-    subtitle: 'Slope 129  |  V.C. 71,2',
     tone: _RowTone.red,
-    frontValues: [
-      '137',
-      '288',
-      '196',
-      '294',
-      '165',
-      '442',
-      '295',
-      '276',
-      '310',
-    ],
-    frontTotal: '2403',
-    backValues: ['137', '288', '196', '294', '165', '442', '295', '276', '310'],
-    backTotal: '2403',
-    summaryValues: ['4806', '', ''],
+    frontValues: ['', '', '', '', '', '', '', '', ''],
+    backValues: ['', '', '', '', '', '', '', '', ''],
+    summaryValues: _emptySummary,
   ),
 ];
 
@@ -85,38 +59,12 @@ const _playRows = [
   ),
 ];
 
-const _referenceRows = [
-  _ScoreRowData(
-    label: 'PAR',
-    frontValues: ['3', '4', '4', '4', '3', '5', '4', '4', '4'],
-    frontTotal: '35',
-    backValues: ['3', '4', '4', '4', '3', '5', '4', '4', '4'],
-    backTotal: '35',
-    summaryValues: ['70', '', ''],
-    valueWeight: FontWeight.w700,
-  ),
-  _ScoreRowData(
-    label: 'P. HCP CABALLEROS',
-    frontValues: ['13', '3', '15', '7', '17', '1', '9', '11', '5'],
-    backValues: ['14', '4', '16', '8', '18', '2', '10', '12', '6'],
-    summaryValues: _emptySummary,
-    valueWeight: FontWeight.w700,
-  ),
-  _ScoreRowData(
-    label: 'P. HCP DAMAS',
-    frontValues: ['11', '5', '15', '9', '17', '1', '13', '7', '3'],
-    backValues: ['12', '6', '16', '10', '18', '2', '14', '8', '4'],
-    summaryValues: _emptySummary,
-    valueWeight: FontWeight.w700,
-  ),
-];
-
 const _formFields = [
   _FormFieldData(label: 'COMPETICION'),
   _FormFieldData(label: 'MODALIDAD'),
   _FormFieldData(label: 'FORMULA'),
   _FormFieldData(label: 'HOYO'),
-  _FormFieldData(label: 'FECHA', secondLabel: 'HORA'),
+  _FormFieldData(label: 'FECHA'),
   _FormFieldData(label: 'EQUIPO'),
 ];
 
@@ -300,9 +248,8 @@ class _ScoreGrid extends StatelessWidget {
     return Column(
       children: [
         _GridHeaderRow(),
-        ..._teeRows.map(_GridDataRow.new),
+        ..._guideRows.map(_GridDataRow.new),
         ..._playRows.map(_GridDataRow.new),
-        ..._referenceRows.map(_GridDataRow.new),
       ],
     );
   }
@@ -437,13 +384,16 @@ class _LowerSection extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Expanded(child: _SignaturesPanel()),
-              SizedBox(width: 16),
-              SizedBox(width: 260, child: _PreferencesPanel()),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Expanded(child: _SignaturesPanel()),
+                SizedBox(width: 16),
+                SizedBox(width: 260, child: _PreferencesPanel()),
+              ],
+            ),
           ),
         ),
       ],
@@ -472,12 +422,6 @@ class _FormLineRow extends StatelessWidget {
           Text(field.label, style: textStyle),
           const SizedBox(width: 8),
           const Expanded(child: _LineField()),
-          if (field.secondLabel != null) ...[
-            const SizedBox(width: 14),
-            Text(field.secondLabel!, style: textStyle),
-            const SizedBox(width: 8),
-            const Expanded(child: _LineField()),
-          ],
         ],
       ),
     );
@@ -490,16 +434,31 @@ class _LineField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Transform.translate(
-      offset: const Offset(0, -3),
-      child: Container(
+      offset: const Offset(0, -4),
+      child: SizedBox(
         height: 18,
-        decoration: const BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: Color.fromRGBO(115, 120, 131, 0.34),
-              width: 2,
-            ),
-          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final segmentCount = (constraints.maxWidth / 8).floor().clamp(
+              1,
+              300,
+            );
+
+            return Row(
+              children: List.generate(segmentCount, (index) {
+                return Expanded(
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Container(
+                      height: 2,
+                      margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                      color: const Color.fromRGBO(115, 120, 131, 0.34),
+                    ),
+                  ),
+                );
+              }),
+            );
+          },
         ),
       ),
     );
@@ -896,9 +855,6 @@ class _RowLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final primaryColor = row.tone == _RowTone.red
         ? const Color(0xFFFFF7F8)
-        : const Color(0xFF3F474F);
-    final secondaryColor = row.tone == _RowTone.red
-        ? const Color.fromRGBO(255, 247, 248, 0.88)
         : const Color(0xFF5F5737);
 
     if (row.label.isEmpty) {
@@ -914,25 +870,12 @@ class _RowLabel extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            fontSize: row.subtitle == null ? 14 : 15,
-            fontWeight: row.subtitle == null
-                ? FontWeight.w500
-                : FontWeight.w700,
-            fontStyle: row.subtitle == null
-                ? FontStyle.italic
-                : FontStyle.normal,
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            fontStyle: FontStyle.italic,
             color: primaryColor,
           ),
         ),
-        if (row.subtitle != null) ...[
-          const SizedBox(height: 2),
-          Text(
-            row.subtitle!,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: secondaryColor),
-          ),
-        ],
       ],
     );
   }
@@ -965,32 +908,26 @@ class _ScoreRowData {
     required this.label,
     required this.frontValues,
     required this.backValues,
-    this.subtitle,
-    this.frontTotal = '',
-    this.backTotal = '',
     this.summaryValues = _emptySummary,
     this.tone = _RowTone.base,
     this.height = 44,
-    this.valueWeight,
   });
 
   final String label;
-  final String? subtitle;
   final List<String> frontValues;
   final List<String> backValues;
-  final String frontTotal;
-  final String backTotal;
+  final String frontTotal = '';
+  final String backTotal = '';
   final List<String> summaryValues;
   final _RowTone tone;
   final double height;
-  final FontWeight? valueWeight;
+  final FontWeight? valueWeight = null;
 }
 
 class _FormFieldData {
-  const _FormFieldData({required this.label, this.secondLabel});
+  const _FormFieldData({required this.label});
 
   final String label;
-  final String? secondLabel;
 }
 
 class _PreferenceColumnData {
