@@ -1,58 +1,13 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_golf/services/datos_servidor_service.dart';
 
 const _frontNine = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const _backNine = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 const _summaryHeaders = ['TOTAL', 'HCP JUEGO', 'NETO'];
 const _emptySummary = ['', '', ''];
-
-const _guideRows = [
-  _ScoreRowData(
-    label: 'metres',
-    tone: _RowTone.yellow,
-    frontValues: ['94', '116', '80', '84', '56', '70', '56', '88', '105'],
-    frontTotal: '749',
-    backValues: ['74', '85', '64', '83', '77', '90', '101', '91', '62'],
-    backTotal: '727',
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: 'handicap',
-    frontValues: ['8', '2', '17', '12', '18', '7', '14', '11', '4'],
-    backValues: ['13', '10', '16', '1', '15', '9', '5', '6', '3'],
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: 'metres EPPA',
-    tone: _RowTone.red,
-    frontValues: ['73', '90', '65', '74', '56', '62', '56', '66', '76'],
-    frontTotal: '618',
-    backValues: ['62', '65', '57', '53', '53', '77', '90', '77', '46'],
-    backTotal: '580',
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: 'handicap EPPA',
-    frontValues: ['55', '3', '18', '10', '15', '8', '11', '9', '12'],
-    backValues: ['16', '14', '7', '4', '17', '5', '1', '6', '2'],
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: 'metres BLANC',
-    frontValues: ['73', '90', '65', '74', '56', '62', '56', '66', '76'],
-    frontTotal: '618',
-    backValues: ['74', '65', '64', '83', '53', '77', '90', '77', '62'],
-    backTotal: '645',
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: 'handicap BLANC',
-    frontValues: ['14', '11', '18', '7', '15', '16', '17', '6', '9'],
-    backValues: ['4', '13', '3', '1', '12', '8', '5', '10', '2'],
-    summaryValues: _emptySummary,
-  ),
-];
 
 const _playRows = [
   _ScoreRowData(
@@ -109,7 +64,7 @@ const _preferenceColumns = [
   ),
 ];
 
-class GolfScorecardScreen extends StatelessWidget {
+class GolfScorecardScreen extends StatefulWidget {
   const GolfScorecardScreen({super.key});
 
   static const double _labelWidth = 180;
@@ -130,6 +85,57 @@ class GolfScorecardScreen extends StatelessWidget {
       scorecardContentWidth + _cardHorizontalPadding + _cardBorderWidth;
   static const double _cardMinWidth = scorecardWidth;
   static const double _cardMaxWidth = 1560;
+  @override
+  State<GolfScorecardScreen> createState() => _GolfScorecardScreenState();
+}
+
+class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
+  late final DatosServidorService _datosServidorService;
+  late List<_ScoreRowData> _guideRows;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    _datosServidorService = DatosServidorService();
+    _guideRows = _buildGuideRows();
+    _loadConfiguration();
+  }
+
+  @override
+  void dispose() {
+    _datosServidorService.close();
+    super.dispose();
+  }
+
+  Future<void> _loadConfiguration() async {
+    try {
+      final response = await _datosServidorService.cojeConfiguracionCampos(
+        '1',
+        'configuracion_tarjeta',
+      );
+      final configuration = _ScorecardConfiguration.fromBackendResponse(
+        response,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _guideRows = configuration.toGuideRows();
+        _loadError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = 'No se pudo cargar la configuracion del campo.';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +181,10 @@ class GolfScorecardScreen extends StatelessWidget {
                     constraints.maxWidth - (horizontalPadding * 2),
                   );
                   final cardWidth = availableWidth
-                      .clamp(_cardMinWidth, _cardMaxWidth)
+                      .clamp(
+                        GolfScorecardScreen._cardMinWidth,
+                        GolfScorecardScreen._cardMaxWidth,
+                      )
                       .toDouble();
 
                   return SingleChildScrollView(
@@ -186,7 +195,10 @@ class GolfScorecardScreen extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: SizedBox(
                           width: cardWidth,
-                          child: const _ScorecardCard(),
+                          child: _ScorecardCard(
+                            guideRows: _guideRows,
+                            loadError: _loadError,
+                          ),
                         ),
                       ),
                     ),
@@ -202,7 +214,10 @@ class GolfScorecardScreen extends StatelessWidget {
 }
 
 class _ScorecardCard extends StatelessWidget {
-  const _ScorecardCard();
+  const _ScorecardCard({required this.guideRows, required this.loadError});
+
+  final List<_ScoreRowData> guideRows;
+  final String? loadError;
 
   @override
   Widget build(BuildContext context) {
@@ -255,12 +270,22 @@ class _ScorecardCard extends StatelessWidget {
             padding: GolfScorecardScreen._cardPadding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: const [
-                _ScoreGrid(),
+              children: [
+                _ScoreGrid(guideRows: guideRows),
+                if (loadError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    loadError!,
+                    style: const TextStyle(
+                      color: Color(0xFF9D433D),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
                 SizedBox(height: 22),
-                _LowerSection(),
-                SizedBox(height: 18),
-                _MarkerStrip(),
+                const _LowerSection(),
+                const SizedBox(height: 18),
+                const _MarkerStrip(),
               ],
             ),
           ),
@@ -271,14 +296,16 @@ class _ScorecardCard extends StatelessWidget {
 }
 
 class _ScoreGrid extends StatelessWidget {
-  const _ScoreGrid();
+  const _ScoreGrid({required this.guideRows});
+
+  final List<_ScoreRowData> guideRows;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _GridHeaderRow(),
-        ..._guideRows.map(_GridDataRow.new),
+        const _GridHeaderRow(),
+        ...guideRows.map(_GridDataRow.new),
         ..._playRows.map(_GridDataRow.new),
       ],
     );
@@ -951,6 +978,210 @@ class _ScoreRowData {
   final List<String> summaryValues;
   final _RowTone tone;
   final double height;
+}
+
+class _ScorecardConfiguration {
+  const _ScorecardConfiguration({required this.holes});
+
+  final List<_HoleConfiguration> holes;
+
+  factory _ScorecardConfiguration.fromBackendResponse(String rawResponse) {
+    final valor = _extractValor(rawResponse);
+
+    final decodedValor = jsonDecode(valor);
+    if (decodedValor is! List) {
+      throw const FormatException('El valor de configuracion no es una lista.');
+    }
+
+    return _ScorecardConfiguration(
+      holes: decodedValor
+          .whereType<Map<String, dynamic>>()
+          .map(_HoleConfiguration.fromJson)
+          .toList(),
+    );
+  }
+
+  static String _extractValor(String rawResponse) {
+    try {
+      final decodedResponse = jsonDecode(rawResponse);
+      if (decodedResponse is! Map<String, dynamic>) {
+        throw const FormatException('La respuesta del backend no es valida.');
+      }
+
+      final valor = decodedResponse['valor'];
+      if (valor is! String) {
+        throw const FormatException('La configuracion recibida no es valida.');
+      }
+
+      return valor;
+    } on FormatException {
+      final trimmedResponse = rawResponse.trim();
+      final match = RegExp(
+        r'^\{"rpta":"[^"]*","valor":"(.*)"\}$',
+        dotAll: true,
+      ).firstMatch(trimmedResponse);
+
+      if (match == null) {
+        rethrow;
+      }
+
+      return match.group(1) ?? '';
+    }
+  }
+
+  List<_ScoreRowData> toGuideRows() {
+    return [
+      _rowFromMetric(
+        label: 'metres',
+        tone: _RowTone.yellow,
+        includeTotals: true,
+        selector: (hole) => hole.metres,
+      ),
+      _rowFromMetric(
+        label: 'handicap',
+        selector: (hole) => hole.handicap,
+      ),
+      _rowFromMetric(
+        label: 'metres EPPA',
+        tone: _RowTone.red,
+        includeTotals: true,
+        selector: (hole) => hole.metresEppa,
+      ),
+      _rowFromMetric(
+        label: 'handicap EPPA',
+        selector: (hole) => hole.handicapEppa,
+      ),
+      _rowFromMetric(
+        label: 'metres BLANC',
+        includeTotals: true,
+        selector: (hole) => hole.metresBlanc,
+      ),
+      _rowFromMetric(
+        label: 'handicap BLANC',
+        selector: (hole) => hole.handicapBlanc,
+      ),
+    ];
+  }
+
+  _ScoreRowData _rowFromMetric({
+    required String label,
+    _RowTone tone = _RowTone.base,
+    bool includeTotals = false,
+    required String Function(_HoleConfiguration hole) selector,
+  }) {
+    final valuesByHole = <int, String>{
+      for (final hole in holes) hole.hoyo: selector(hole),
+    };
+
+    final frontValues = _frontNine
+        .map((hole) => valuesByHole[hole] ?? '')
+        .toList(growable: false);
+    final backValues = _backNine
+        .map((hole) => valuesByHole[hole] ?? '')
+        .toList(growable: false);
+
+    return _ScoreRowData(
+      label: label,
+      tone: tone,
+      frontValues: frontValues,
+      backValues: backValues,
+      frontTotal: includeTotals ? _sumValues(frontValues) : '',
+      backTotal: includeTotals ? _sumValues(backValues) : '',
+      summaryValues: _emptySummary,
+    );
+  }
+
+  static String _sumValues(List<String> values) {
+    var total = 0;
+    var hasValue = false;
+
+    for (final value in values) {
+      final parsed = int.tryParse(value);
+      if (parsed == null) {
+        continue;
+      }
+      total += parsed;
+      hasValue = true;
+    }
+
+    return hasValue ? '$total' : '';
+  }
+}
+
+class _HoleConfiguration {
+  const _HoleConfiguration({
+    required this.hoyo,
+    required this.metres,
+    required this.handicap,
+    required this.metresEppa,
+    required this.handicapEppa,
+    required this.metresBlanc,
+    required this.handicapBlanc,
+  });
+
+  final int hoyo;
+  final String metres;
+  final String handicap;
+  final String metresEppa;
+  final String handicapEppa;
+  final String metresBlanc;
+  final String handicapBlanc;
+
+  factory _HoleConfiguration.fromJson(Map<String, dynamic> json) {
+    return _HoleConfiguration(
+      hoyo: int.tryParse('${json['hoyo'] ?? ''}') ?? 0,
+      metres: '${json['metros'] ?? ''}',
+      handicap: '${json['handicap'] ?? ''}',
+      metresEppa: '${json['metros_EPPA'] ?? ''}',
+      handicapEppa:
+          '${json['handicap_EPPA'] ?? json['hadicap_EPPA'] ?? ''}',
+      metresBlanc: '${json['metros_BLANC'] ?? ''}',
+      handicapBlanc: '${json['handicap_BLANC'] ?? ''}',
+    );
+  }
+}
+
+List<_ScoreRowData> _buildGuideRows() {
+  return const [
+    _ScoreRowData(
+      label: 'metres',
+      tone: _RowTone.yellow,
+      frontValues: ['', '', '', '', '', '', '', '', ''],
+      backValues: ['', '', '', '', '', '', '', '', ''],
+      summaryValues: _emptySummary,
+    ),
+    _ScoreRowData(
+      label: 'handicap',
+      frontValues: ['', '', '', '', '', '', '', '', ''],
+      backValues: ['', '', '', '', '', '', '', '', ''],
+      summaryValues: _emptySummary,
+    ),
+    _ScoreRowData(
+      label: 'metres EPPA',
+      tone: _RowTone.red,
+      frontValues: ['', '', '', '', '', '', '', '', ''],
+      backValues: ['', '', '', '', '', '', '', '', ''],
+      summaryValues: _emptySummary,
+    ),
+    _ScoreRowData(
+      label: 'handicap EPPA',
+      frontValues: ['', '', '', '', '', '', '', '', ''],
+      backValues: ['', '', '', '', '', '', '', '', ''],
+      summaryValues: _emptySummary,
+    ),
+    _ScoreRowData(
+      label: 'metres BLANC',
+      frontValues: ['', '', '', '', '', '', '', '', ''],
+      backValues: ['', '', '', '', '', '', '', '', ''],
+      summaryValues: _emptySummary,
+    ),
+    _ScoreRowData(
+      label: 'handicap BLANC',
+      frontValues: ['', '', '', '', '', '', '', '', ''],
+      backValues: ['', '', '', '', '', '', '', '', ''],
+      summaryValues: _emptySummary,
+    ),
+  ];
 }
 
 class _FormFieldData {

@@ -11,9 +11,7 @@ class DatosServidorService {
        _ownsClient = client == null,
        endpoint =
            endpoint ??
-           Uri.parse(
-             'https://autopowersoft.com/obtenerJSON/obtenerJSON.aspx',
-           );
+           Uri.parse('https://autopowersoft.com/obtenerJSON/obtenerJSON.aspx');
 
   final http.Client _client;
   final bool _ownsClient;
@@ -25,27 +23,20 @@ class DatosServidorService {
     String parametro,
     String valor,
   ) {
-    return _getTexto(
-      {
-        'accion': 'actualiza_configuracion_campos',
-        'idCampo': idCampo,
-        'parametro': parametro,
-        'valor': valor,
-      },
-    );
+    return _getTexto({
+      'accion': 'actualiza_configuracion_campos',
+      'idCampo': idCampo,
+      'parametro': parametro,
+      'valor': valor,
+    });
   }
 
-  Future<String> cojeConfiguracionCampos(
-    String idCampo,
-    String parametro,
-  ) {
-    return _getTexto(
-      {
-        'accion': 'coje_configuracion_campos',
-        'idCampo': idCampo,
-        'parametro': parametro,
-      },
-    );
+  Future<String> cojeConfiguracionCampos(String idCampo, String parametro) {
+    return _getTexto({
+      'accion': 'coje_configuracion_campos',
+      'idCampo': idCampo,
+      'parametro': parametro,
+    });
   }
 
   Future<String> _getTexto(Map<String, String> queryParameters) async {
