@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_golf/services/datos_servidor_service.dart';
 
 const _frontNine = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -65,7 +66,14 @@ const _preferenceColumns = [
 ];
 
 class GolfScorecardScreen extends StatefulWidget {
-  const GolfScorecardScreen({super.key});
+  const GolfScorecardScreen({
+    super.key,
+    required this.idPartida,
+    required this.jugadores,
+    required this.initialPlayRowsJson,
+    this.differentRemotePlayRowsJson,
+    this.onPlayRowsJsonChanged,
+  });
 
   static const double _labelWidth = 180;
   static const double _holeWidth = 48;
@@ -85,6 +93,12 @@ class GolfScorecardScreen extends StatefulWidget {
       scorecardContentWidth + _cardHorizontalPadding + _cardBorderWidth;
   static const double _cardMinWidth = scorecardWidth;
   static const double _cardMaxWidth = 1560;
+  final String idPartida;
+  final String jugadores;
+  final String initialPlayRowsJson;
+  final String? differentRemotePlayRowsJson;
+  final ValueChanged<String>? onPlayRowsJsonChanged;
+
   @override
   State<GolfScorecardScreen> createState() => _GolfScorecardScreenState();
 }
@@ -92,6 +106,8 @@ class GolfScorecardScreen extends StatefulWidget {
 class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late final DatosServidorService _datosServidorService;
   late List<_ScoreRowData> _guideRows;
+  late List<List<String>> _playRowValues;
+  late List<String> _playRowModifiedValues;
   String? _loadError;
 
   @override
@@ -99,7 +115,24 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     super.initState();
     _datosServidorService = DatosServidorService();
     _guideRows = _buildGuideRows();
+    _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
+    _playRowModifiedValues = _decodePlayRowModifiedValues(
+      widget.initialPlayRowsJson,
+    );
     _loadConfiguration();
+  }
+
+  @override
+  void didUpdateWidget(covariant GolfScorecardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialPlayRowsJson == oldWidget.initialPlayRowsJson) {
+      return;
+    }
+
+    _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
+    _playRowModifiedValues = _decodePlayRowModifiedValues(
+      widget.initialPlayRowsJson,
+    );
   }
 
   @override
@@ -135,6 +168,29 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
         _loadError = 'No se pudo cargar la configuracion del campo.';
       });
     }
+  }
+
+  void _updatePlayValue(int rowIndex, int holeIndex, String value) {
+    setState(() {
+      _playRowValues[rowIndex][holeIndex] = value;
+      _playRowModifiedValues[rowIndex] = _formatModifiedTimestamp(
+        DateTime.now(),
+      );
+    });
+    widget.onPlayRowsJsonChanged?.call(_playRowsJsonString);
+  }
+
+  String get _playRowsJsonString {
+    final data = List.generate(_playRowValues.length, (rowIndex) {
+      return <String, String>{
+        'jugador': '${rowIndex + 1}',
+        'modificado': _playRowModifiedValues[rowIndex],
+        for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+          'hoyo_${holeIndex + 1}': _playRowValues[rowIndex][holeIndex],
+      };
+    });
+
+    return jsonEncode(data);
   }
 
   @override
@@ -197,7 +253,14 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                           width: cardWidth,
                           child: _ScorecardCard(
                             guideRows: _guideRows,
+                            playRowValues: _playRowValues,
+                            idPartida: widget.idPartida,
+                            jugadores: widget.jugadores,
                             loadError: _loadError,
+                            onPlayValueChanged: _updatePlayValue,
+                            playRowsJsonString: _playRowsJsonString,
+                            differentRemotePlayRowsJson:
+                                widget.differentRemotePlayRowsJson,
                           ),
                         ),
                       ),
@@ -214,10 +277,26 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 }
 
 class _ScorecardCard extends StatelessWidget {
-  const _ScorecardCard({required this.guideRows, required this.loadError});
+  const _ScorecardCard({
+    required this.guideRows,
+    required this.playRowValues,
+    required this.idPartida,
+    required this.jugadores,
+    required this.loadError,
+    required this.onPlayValueChanged,
+    required this.playRowsJsonString,
+    required this.differentRemotePlayRowsJson,
+  });
 
   final List<_ScoreRowData> guideRows;
+  final List<List<String>> playRowValues;
+  final String idPartida;
+  final String jugadores;
   final String? loadError;
+  final void Function(int rowIndex, int holeIndex, String value)
+  onPlayValueChanged;
+  final String playRowsJsonString;
+  final String? differentRemotePlayRowsJson;
 
   @override
   Widget build(BuildContext context) {
@@ -271,7 +350,12 @@ class _ScorecardCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _ScoreGrid(guideRows: guideRows),
+                _ScoreGrid(
+                  guideRows: guideRows,
+                  playRowValues: playRowValues,
+                  jugadores: jugadores,
+                  onPlayValueChanged: onPlayValueChanged,
+                ),
                 if (loadError != null) ...[
                   const SizedBox(height: 10),
                   Text(
@@ -279,6 +363,33 @@ class _ScorecardCard extends StatelessWidget {
                     style: const TextStyle(
                       color: Color(0xFF9D433D),
                       fontSize: 13,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  'idPartida: $idPartida · Jugadores: $jugadores',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  playRowsJsonString,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
+                if (differentRemotePlayRowsJson != null) ...[
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    differentRemotePlayRowsJson!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF7A1E1E),
                     ),
                   ),
                 ],
@@ -296,9 +407,18 @@ class _ScorecardCard extends StatelessWidget {
 }
 
 class _ScoreGrid extends StatelessWidget {
-  const _ScoreGrid({required this.guideRows});
+  const _ScoreGrid({
+    required this.guideRows,
+    required this.playRowValues,
+    required this.jugadores,
+    required this.onPlayValueChanged,
+  });
 
   final List<_ScoreRowData> guideRows;
+  final List<List<String>> playRowValues;
+  final String jugadores;
+  final void Function(int rowIndex, int holeIndex, String value)
+  onPlayValueChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -306,7 +426,15 @@ class _ScoreGrid extends StatelessWidget {
       children: [
         const _GridHeaderRow(),
         ...guideRows.map(_GridDataRow.new),
-        ..._playRows.map(_GridDataRow.new),
+        ..._playRows.asMap().entries.map(
+          (entry) => _GridPlayRow(
+            row: entry.value,
+            rowIndex: entry.key,
+            values: playRowValues[entry.key],
+            isEditable: entry.key < (int.tryParse(jugadores) ?? 0).clamp(0, 4),
+            onValueChanged: onPlayValueChanged,
+          ),
+        ),
       ],
     );
   }
@@ -412,6 +540,83 @@ class _GridDataRow extends StatelessWidget {
             _GridCell.summary(
               width: GolfScorecardScreen._summaryWidth,
               child: _ValueText(value),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GridPlayRow extends StatelessWidget {
+  const _GridPlayRow({
+    required this.row,
+    required this.rowIndex,
+    required this.values,
+    required this.isEditable,
+    required this.onValueChanged,
+  });
+
+  final _ScoreRowData row;
+  final int rowIndex;
+  final List<String> values;
+  final bool isEditable;
+  final void Function(int rowIndex, int holeIndex, String value) onValueChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final frontValues = values.take(9).toList(growable: false);
+    final backValues = values.skip(9).take(9).toList(growable: false);
+    final tone = isEditable ? row.tone : _RowTone.disabledPlay;
+
+    return SizedBox(
+      height: row.height,
+      child: Row(
+        children: [
+          _GridCell.data(
+            width: GolfScorecardScreen._labelWidth,
+            tone: tone,
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            isLabel: true,
+            child: _RowLabel(row: row),
+          ),
+          for (final entry in frontValues.asMap().entries)
+            _GridCell.data(
+              width: GolfScorecardScreen._holeWidth,
+              tone: tone,
+              child: _NumericGridInput(
+                initialValue: entry.value,
+                enabled: isEditable,
+                onChanged: (value) =>
+                    onValueChanged(rowIndex, entry.key, value),
+              ),
+            ),
+          _GridCell.data(
+            width: GolfScorecardScreen._subtotalWidth,
+            tone: tone,
+            child: const SizedBox.shrink(),
+          ),
+          const _FoldCell(),
+          for (final entry in backValues.asMap().entries)
+            _GridCell.data(
+              width: GolfScorecardScreen._holeWidth,
+              tone: tone,
+              child: _NumericGridInput(
+                initialValue: entry.value,
+                enabled: isEditable,
+                onChanged: (value) =>
+                    onValueChanged(rowIndex, entry.key + 9, value),
+              ),
+            ),
+          _GridCell.data(
+            width: GolfScorecardScreen._subtotalWidth,
+            tone: tone,
+            child: const SizedBox.shrink(),
+          ),
+          for (final _ in _summaryHeaders)
+            _GridCell.summary(
+              width: GolfScorecardScreen._summaryWidth,
+              child: const SizedBox.shrink(),
             ),
         ],
       ),
@@ -958,6 +1163,82 @@ class _ValueText extends StatelessWidget {
   }
 }
 
+class _NumericGridInput extends StatefulWidget {
+  const _NumericGridInput({
+    required this.initialValue,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String initialValue;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_NumericGridInput> createState() => _NumericGridInputState();
+}
+
+class _NumericGridInputState extends State<_NumericGridInput> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _NumericGridInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialValue != _controller.text) {
+      _controller.value = TextEditingValue(
+        text: widget.initialValue,
+        selection: TextSelection.collapsed(offset: widget.initialValue.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      keyboardType: TextInputType.number,
+      textInputAction: TextInputAction.next,
+      enabled: widget.enabled,
+      readOnly: !widget.enabled,
+      showCursor: widget.enabled,
+      enableSuggestions: false,
+      autocorrect: false,
+      smartDashesType: SmartDashesType.disabled,
+      smartQuotesType: SmartQuotesType.disabled,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: widget.enabled
+            ? const Color(0xFF545B66)
+            : const Color.fromRGBO(84, 91, 102, 0.42),
+      ),
+      decoration: const InputDecoration(
+        isDense: true,
+        border: InputBorder.none,
+        contentPadding: EdgeInsets.symmetric(vertical: 8),
+      ),
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(3),
+      ],
+      onChanged: widget.onChanged,
+    );
+  }
+}
+
 class _ScoreRowData {
   const _ScoreRowData({
     required this.label,
@@ -1037,10 +1318,7 @@ class _ScorecardConfiguration {
         includeTotals: true,
         selector: (hole) => hole.metres,
       ),
-      _rowFromMetric(
-        label: 'handicap',
-        selector: (hole) => hole.handicap,
-      ),
+      _rowFromMetric(label: 'handicap', selector: (hole) => hole.handicap),
       _rowFromMetric(
         label: 'metres EPPA',
         tone: _RowTone.red,
@@ -1133,8 +1411,7 @@ class _HoleConfiguration {
       metres: '${json['metros'] ?? ''}',
       handicap: '${json['handicap'] ?? ''}',
       metresEppa: '${json['metros_EPPA'] ?? ''}',
-      handicapEppa:
-          '${json['handicap_EPPA'] ?? json['hadicap_EPPA'] ?? ''}',
+      handicapEppa: '${json['handicap_EPPA'] ?? json['hadicap_EPPA'] ?? ''}',
       metresBlanc: '${json['metros_BLANC'] ?? ''}',
       handicapBlanc: '${json['handicap_BLANC'] ?? ''}',
     );
@@ -1184,6 +1461,76 @@ List<_ScoreRowData> _buildGuideRows() {
   ];
 }
 
+List<List<String>> _decodePlayRows(String rawJson) {
+  final emptyRows = List.generate(4, (_) => List.filled(18, ''));
+
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! List) {
+      return emptyRows;
+    }
+
+    for (
+      var rowIndex = 0;
+      rowIndex < 4 && rowIndex < decoded.length;
+      rowIndex++
+    ) {
+      final row = decoded[rowIndex];
+      if (row is! Map) {
+        continue;
+      }
+      for (var holeIndex = 0; holeIndex < 18; holeIndex++) {
+        final value = row['hoyo_${holeIndex + 1}'];
+        emptyRows[rowIndex][holeIndex] = value == null ? '' : '$value';
+      }
+    }
+  } catch (_) {
+    return emptyRows;
+  }
+
+  return emptyRows;
+}
+
+List<String> _decodePlayRowModifiedValues(String rawJson) {
+  final modifiedValues = List.filled(4, '');
+
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! List) {
+      return modifiedValues;
+    }
+
+    for (
+      var rowIndex = 0;
+      rowIndex < 4 && rowIndex < decoded.length;
+      rowIndex++
+    ) {
+      final row = decoded[rowIndex];
+      if (row is! Map) {
+        continue;
+      }
+
+      final value = row['modificado'];
+      modifiedValues[rowIndex] = value == null ? '' : '$value';
+    }
+  } catch (_) {
+    return modifiedValues;
+  }
+
+  return modifiedValues;
+}
+
+String _formatModifiedTimestamp(DateTime dateTime) {
+  String twoDigits(int value) => value.toString().padLeft(2, '0');
+
+  return '${twoDigits(dateTime.year % 100)}'
+      '${twoDigits(dateTime.month)}'
+      '${twoDigits(dateTime.day)}'
+      '${twoDigits(dateTime.hour)}'
+      '${twoDigits(dateTime.minute)}'
+      '${twoDigits(dateTime.second)}';
+}
+
 class _FormFieldData {
   const _FormFieldData({required this.label});
 
@@ -1197,7 +1544,7 @@ class _PreferenceColumnData {
   final List<String> items;
 }
 
-enum _RowTone { base, yellow, red, mutedLabel }
+enum _RowTone { base, yellow, red, mutedLabel, disabledPlay }
 
 const _borderSide = BorderSide(
   color: Color.fromRGBO(88, 95, 102, 0.34),
@@ -1268,6 +1615,11 @@ BoxDecoration _dataDecoration(_RowTone tone, {required bool isLabel}) {
             ? const Color.fromRGBO(224, 230, 229, 0.72)
             : const Color.fromRGBO(255, 255, 255, 0.80),
       );
+    case _RowTone.disabledPlay:
+      return const BoxDecoration(
+        border: Border.fromBorderSide(_borderSide),
+        color: Color.fromRGBO(226, 228, 232, 0.92),
+      );
     case _RowTone.base:
       return const BoxDecoration(
         border: Border.fromBorderSide(_borderSide),
@@ -1282,6 +1634,8 @@ Color _toneTextColor(_RowTone tone) {
       return const Color(0xFF5F5737);
     case _RowTone.red:
       return const Color(0xFFFFF7F8);
+    case _RowTone.disabledPlay:
+      return const Color.fromRGBO(84, 91, 102, 0.52);
     case _RowTone.base:
     case _RowTone.mutedLabel:
       return const Color(0xFF56606C);

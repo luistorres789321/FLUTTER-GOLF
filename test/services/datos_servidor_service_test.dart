@@ -59,6 +59,49 @@ void main() {
       });
     });
 
+    test('construye la query de creaPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('ok', 200);
+        }),
+      );
+
+      final result = await service.creaPartida('1', 'ABC123XYZ9', '3');
+
+      expect(result, 'ok');
+      expect(requestedUri.queryParameters, {
+        'accion': 'crea_partida',
+        'idCampo': '1',
+        'idPartida': 'ABC123XYZ9',
+        'jugadores': '3',
+      });
+    });
+
+    test('construye la query de anotaJsonHoyos', () async {
+      late Uri requestedUri;
+      const jsonHoyos = '[{"jugador":"1","hoyo_1":"4"}]';
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('ok', 200);
+        }),
+      );
+
+      final result = await service.anotaJsonHoyos('1', 'ABC123XYZ9', jsonHoyos);
+
+      expect(result, 'ok');
+      expect(requestedUri.queryParameters, {
+        'accion': 'anota_json_hoyos',
+        'idCampo': '1',
+        'idPartida': 'ABC123XYZ9',
+        'json_hoyos': jsonHoyos,
+      });
+    });
+
     test('lanza DatosServidorException cuando el backend responde error', () {
       final service = DatosServidorService(
         client: MockClient((request) async {

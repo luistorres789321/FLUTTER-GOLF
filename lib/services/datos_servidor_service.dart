@@ -18,6 +18,40 @@ class DatosServidorService {
   final Uri endpoint;
   final Duration timeout;
 
+  Future<String> obtenerJsonHoyos(String idCampo, String idPartida) {
+    return _getTexto({
+      'accion': 'obtener_json_hoyos',
+      'idCampo': idCampo,
+      'idPartida': idPartida,
+    });
+  }
+
+  Future<String> anotaJsonHoyos(
+    String idCampo,
+    String idPartida,
+    String jsonHoyos,
+  ) {
+    return _getTexto({
+      'accion': 'anota_json_hoyos',
+      'idCampo': idCampo,
+      'idPartida': idPartida,
+      'json_hoyos': jsonHoyos,
+    });
+  }
+
+  Future<String> creaPartida(
+    String idCampo,
+    String idPartida,
+    String jugadores,
+  ) {
+    return _getTexto({
+      'accion': 'crea_partida',
+      'idCampo': idCampo,
+      'idPartida': idPartida,
+      'jugadores': jugadores,
+    });
+  }
+
   Future<String> actualizaConfiguracionCampos(
     String idCampo,
     String parametro,
