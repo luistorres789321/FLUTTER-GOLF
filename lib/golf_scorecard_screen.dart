@@ -202,7 +202,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF6B432D), Color(0xFF472819)],
+            colors: [Color(0xFF173F2D), Color(0xFF0B241A)],
           ),
         ),
         child: Stack(

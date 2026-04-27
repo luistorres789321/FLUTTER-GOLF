@@ -52,6 +52,45 @@ class DatosServidorService {
     });
   }
 
+  Future<String> yaExisteAlias(String alias) {
+    return _getTexto({'accion': 'ya_existe_alias', 'alias': alias});
+  }
+
+  Future<String> yaExisteMovil(String movil) {
+    return _getTexto({'accion': 'ya_existe_movil', 'movil': movil});
+  }
+
+  Future<String> yaExisteMail(String mail) {
+    return _getTexto({'accion': 'ya_existe_mail', 'mail': mail});
+  }
+
+  Future<String> altaUsuario(
+    String alias,
+    String nombre,
+    String apellidos,
+    String direccion,
+    String cp,
+    String poblacion,
+    String provincia,
+    String movil,
+    String mail,
+    String numeroFederadoGolf,
+  ) {
+    return _getTexto({
+      'accion': 'alta_usuario_golf',
+      'alias': alias,
+      'nombre': nombre,
+      'apellidos': apellidos,
+      'direccion': direccion,
+      'cp': cp,
+      'poblacion': poblacion,
+      'provincia': provincia,
+      'movil': movil,
+      'mail': mail,
+      'numero_federado_golf': numeroFederadoGolf,
+    });
+  }
+
   Future<String> actualizaConfiguracionCampos(
     String idCampo,
     String parametro,

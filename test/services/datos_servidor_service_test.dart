@@ -102,6 +102,45 @@ void main() {
       });
     });
 
+    test('construye la query de altaUsuario', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.altaUsuario(
+        'Auto',
+        'Nombre',
+        'Apellidos',
+        'Direccion 1',
+        '28001',
+        'Madrid',
+        'Madrid',
+        '600000000',
+        'auto@example.com',
+        '12345',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'alta_usuario_golf',
+        'alias': 'Auto',
+        'nombre': 'Nombre',
+        'apellidos': 'Apellidos',
+        'direccion': 'Direccion 1',
+        'cp': '28001',
+        'poblacion': 'Madrid',
+        'provincia': 'Madrid',
+        'movil': '600000000',
+        'mail': 'auto@example.com',
+        'numero_federado_golf': '12345',
+      });
+    });
+
     test('lanza DatosServidorException cuando el backend responde error', () {
       final service = DatosServidorService(
         client: MockClient((request) async {
