@@ -132,9 +132,14 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   Future<void> _saveUserInformation(
     _UserInformation information, {
     required bool isRegistered,
+    String idUsuario = '',
   }) async {
+    final savedInformation = information.copyWith(idUsuario: idUsuario);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_savedUserInformationKey, information.toJsonString());
+    await prefs.setString(
+      _savedUserInformationKey,
+      savedInformation.toJsonString(),
+    );
     await prefs.setBool(_savedUserRegisteredKey, isRegistered);
 
     if (!mounted) {
@@ -142,7 +147,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     }
 
     setState(() {
-      _userInformation = information;
+      _userInformation = savedInformation;
       _isUserRegistered = isRegistered;
       _isEditingUserInformation = false;
       _isUserInformationDismissed = false;
@@ -667,6 +672,7 @@ class _UserInformationScreen extends StatefulWidget {
   final Future<void> Function(
     _UserInformation information, {
     required bool isRegistered,
+    String idUsuario,
   })
   onSave;
   final VoidCallback? onCancel;
@@ -783,8 +789,12 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       return;
     }
 
-    final isRegistered = await _registerUserInBackend(information);
-    await widget.onSave(information, isRegistered: isRegistered);
+    final registration = await _registerUserInBackend(information);
+    await widget.onSave(
+      information,
+      isRegistered: registration.isRegistered,
+      idUsuario: registration.idUsuario,
+    );
 
     if (!mounted) {
       return;
@@ -936,7 +946,9 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
     return errors;
   }
 
-  Future<bool> _registerUserInBackend(_UserInformation information) async {
+  Future<_UserRegistrationResult> _registerUserInBackend(
+    _UserInformation information,
+  ) async {
     try {
       final response = await widget.datosServidorService.altaUsuario(
         information.alias,
@@ -950,12 +962,12 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
         information.mail,
         information.numeroFederadoGolf,
       );
-      final isRegistered = _backendResponseSaysOk(response);
+      final registration = _userRegistrationResultFromBackend(response);
       debugPrint('altaUsuario(${information.alias}): $response');
-      return isRegistered;
+      return registration;
     } catch (error) {
       debugPrint('altaUsuario(${information.alias}) fallo: $error');
-      return false;
+      return const _UserRegistrationResult(isRegistered: false);
     }
   }
 
@@ -1199,6 +1211,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
 class _UserInformation {
   const _UserInformation({
+    this.idUsuario = '',
     required this.alias,
     required this.nombre,
     required this.apellidos,
@@ -1211,6 +1224,7 @@ class _UserInformation {
     required this.numeroFederadoGolf,
   });
 
+  final String idUsuario;
   final String alias;
   final String nombre;
   final String apellidos;
@@ -1242,6 +1256,7 @@ class _UserInformation {
 
   static _UserInformation? _fromMap(Map<String, dynamic> map) {
     final information = _UserInformation(
+      idUsuario: _requiredValue(map, 'idUsuario'),
       alias: _requiredValue(map, 'alias'),
       nombre: _requiredValue(map, 'nombre'),
       apellidos: _requiredValue(map, 'apellidos'),
@@ -1270,6 +1285,7 @@ class _UserInformation {
   String valueFor(String key) {
     return switch (key) {
       'alias' => alias,
+      'idUsuario' => idUsuario,
       'nombre' => nombre,
       'apellidos' => apellidos,
       'direccion' => direccion,
@@ -1287,6 +1303,7 @@ class _UserInformation {
 
   Map<String, String> toJson() {
     return {
+      'idUsuario': idUsuario,
       'alias': alias,
       'nombre': nombre,
       'apellidos': apellidos,
@@ -1299,6 +1316,22 @@ class _UserInformation {
       'numeroFederadoGolf': numeroFederadoGolf,
     };
   }
+
+  _UserInformation copyWith({String? idUsuario}) {
+    return _UserInformation(
+      idUsuario: idUsuario ?? this.idUsuario,
+      alias: alias,
+      nombre: nombre,
+      apellidos: apellidos,
+      direccion: direccion,
+      cp: cp,
+      poblacion: poblacion,
+      provincia: provincia,
+      telefono: telefono,
+      mail: mail,
+      numeroFederadoGolf: numeroFederadoGolf,
+    );
+  }
 }
 
 bool _backendResponseSaysYes(String response) {
@@ -1310,8 +1343,26 @@ bool _backendResponseSaysYes(String response) {
   return rpta == 'si' || rpta == 'sí';
 }
 
-bool _backendResponseSaysOk(String response) {
-  return _backendResponseValue(response) == 'ok';
+_UserRegistrationResult _userRegistrationResultFromBackend(String response) {
+  final rpta = _backendResponseValue(response);
+  if (rpta != 'ok') {
+    return const _UserRegistrationResult(isRegistered: false);
+  }
+
+  return _UserRegistrationResult(
+    isRegistered: true,
+    idUsuario: _backendResponseField(response, 'idUsuario') ?? '',
+  );
+}
+
+class _UserRegistrationResult {
+  const _UserRegistrationResult({
+    required this.isRegistered,
+    this.idUsuario = '',
+  });
+
+  final bool isRegistered;
+  final String idUsuario;
 }
 
 String? _backendResponseValue(String response) {
@@ -1345,6 +1396,30 @@ String? _backendResponseValue(String response) {
       ?.group(1)
       ?.trim()
       .toLowerCase();
+}
+
+String? _backendResponseField(String response, String key) {
+  final trimmedResponse = response.trim();
+  if (trimmedResponse.isEmpty) {
+    return null;
+  }
+
+  try {
+    final decoded = jsonDecode(trimmedResponse);
+    if (decoded is Map) {
+      final value = decoded[key];
+      if (value != null) {
+        return '$value'.trim();
+      }
+    }
+  } catch (_) {
+    // El backend historicamente devuelve algunas respuestas con comillas simples.
+  }
+
+  return RegExp(
+    '''['"]${RegExp.escape(key)}['"]\\s*:\\s*['"]([^'"]+)['"]''',
+    caseSensitive: false,
+  ).firstMatch(trimmedResponse)?.group(1)?.trim();
 }
 
 String _createEmptyPlayRowsJson() {

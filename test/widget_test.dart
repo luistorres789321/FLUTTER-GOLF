@@ -115,6 +115,12 @@ void main() {
       (uri) => uri.queryParameters['accion'] == 'alta_usuario_golf',
     );
     expect(altaUsuarioUri.queryParameters, containsPair('movil', '600000000'));
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedInformation = jsonDecode(
+      prefs.getString('saved_user_information_json')!,
+    );
+    expect(savedInformation['idUsuario'], '123');
   });
 
   testWidgets('keeps local user unregistered when backend registration fails', (
@@ -397,7 +403,10 @@ DatosServidorService _existingFieldsService({
       final accion = request.url.queryParameters['accion'];
       if (accion == 'alta_usuario_golf') {
         return http.Response(
-          jsonEncode({'rpta': altaUsuarioOk ? 'ok' : 'ko'}),
+          jsonEncode({
+            'rpta': altaUsuarioOk ? 'ok' : 'ko',
+            if (altaUsuarioOk) 'idUsuario': '123',
+          }),
           200,
         );
       }
@@ -416,6 +425,7 @@ DatosServidorService _existingFieldsService({
 
 String _userInformationJson({String alias = 'Auto'}) {
   return jsonEncode({
+    'idUsuario': '123',
     'alias': alias,
     'nombre': 'Nombre',
     'apellidos': 'Apellidos',
