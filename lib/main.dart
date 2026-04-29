@@ -74,6 +74,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   String? _creationError;
   String? _userRegistrationError;
   _GameSession? _activeSession;
+  List<_CreatedGameInfo> _createdGames = const [];
   _UserInformation? _userInformation;
   bool _isUserRegistered = false;
   bool _isEditingUserInformation = false;
@@ -127,6 +128,10 @@ class _GolfAppHomeState extends State<GolfAppHome> {
           : _userRegistrationRequiredMessage;
       _isLoading = false;
     });
+
+    if (isUserRegistered && userInformation.idUsuario.isNotEmpty) {
+      unawaited(_loadCreatedGames(userInformation.idUsuario));
+    }
   }
 
   Future<void> _saveUserInformation(
@@ -155,6 +160,39 @@ class _GolfAppHomeState extends State<GolfAppHome> {
           ? null
           : _userRegistrationRequiredMessage;
     });
+
+    if (isRegistered && savedInformation.idUsuario.isNotEmpty) {
+      unawaited(_loadCreatedGames(savedInformation.idUsuario));
+    } else {
+      setState(() {
+        _createdGames = const [];
+      });
+    }
+  }
+
+  Future<void> _loadCreatedGames(String idUsuario) async {
+    try {
+      final response = await _datosServidorService.obtenerPartidasCreadas(
+        idUsuario,
+      );
+      final createdGames = _createdGamesFromResponse(response);
+      if (!mounted || _userInformation?.idUsuario != idUsuario) {
+        return;
+      }
+
+      setState(() {
+        _createdGames = createdGames;
+      });
+    } catch (error) {
+      debugPrint('obtener partidas creadas fallo: $error');
+      if (!mounted || _userInformation?.idUsuario != idUsuario) {
+        return;
+      }
+
+      setState(() {
+        _createdGames = const [];
+      });
+    }
   }
 
   void _editUserInformation() {
@@ -245,6 +283,38 @@ class _GolfAppHomeState extends State<GolfAppHome> {
       );
     });
     _startJsonHoyosPolling();
+  }
+
+  void _openReservationDaySelection() {
+    final currentIdPartida = _activeSession?.idPartida ?? _savedGameId;
+    final idPartida = currentIdPartida == null || currentIdPartida.isEmpty
+        ? _generateGameId()
+        : currentIdPartida;
+    final idUsuario = _userInformation?.idUsuario ?? '';
+
+    if (idUsuario.isEmpty) {
+      setState(() {
+        _creationError = 'No se pudo identificar el usuario para reservar.';
+        _userRegistrationError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _creationError = null;
+      _userRegistrationError = null;
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _ReservationDayScreen(
+          datosServidorService: _datosServidorService,
+          fieldId: _savedFieldId,
+          idPartida: idPartida,
+          idUsuario: idUsuario,
+        ),
+      ),
+    );
   }
 
   Future<void> _savePlayRowsJson(String playRowsJson) async {
@@ -554,6 +624,49 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
+                                onPressed: canUseGameActions
+                                    ? _openReservationDaySelection
+                                    : null,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF567B37),
+                                  side: const BorderSide(
+                                    color: Color(0xFF567B37),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 18,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.event_available),
+                                label: const Text('Reservar Partida'),
+                              ),
+                              const SizedBox(height: 14),
+                              OutlinedButton.icon(
+                                onPressed:
+                                    canUseGameActions &&
+                                        _createdGames.isNotEmpty
+                                    ? () {}
+                                    : null,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF567B37),
+                                  disabledForegroundColor: const Color(
+                                    0xFF9AA092,
+                                  ),
+                                  side: BorderSide(
+                                    color:
+                                        canUseGameActions &&
+                                            _createdGames.isNotEmpty
+                                        ? const Color(0xFF567B37)
+                                        : const Color(0xFFD8D2C7),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 18,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.event_note),
+                                label: const Text('Partidas Pendientes'),
+                              ),
+                              const SizedBox(height: 14),
+                              OutlinedButton.icon(
                                 onPressed: _editUserInformation,
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: const Color(0xFF545B66),
@@ -655,6 +768,953 @@ class _GolfLogo extends StatelessWidget {
         fit: BoxFit.contain,
         semanticLabel: 'Logo golf',
       ),
+    );
+  }
+}
+
+class _ReservationScreenFrame extends StatelessWidget {
+  const _ReservationScreenFrame({
+    required this.title,
+    required this.children,
+    this.maxWidth = 520,
+  });
+
+  final String title;
+  final List<Widget> children;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B241A),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF235C3D), Color(0xFF03110C)],
+          ),
+        ),
+        child: SizedBox.expand(
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: Container(
+                    padding: const EdgeInsets.all(28),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFFAF8F3), Color(0xFFF6F2EA)],
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color.fromRGBO(28, 14, 8, 0.26),
+                          blurRadius: 50,
+                          offset: Offset(0, 24),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const _GolfLogo(size: 96),
+                        const SizedBox(height: 16),
+                        Text(
+                          title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF545B66),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        ...children,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReservationDayScreen extends StatefulWidget {
+  const _ReservationDayScreen({
+    required this.datosServidorService,
+    required this.fieldId,
+    required this.idPartida,
+    required this.idUsuario,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String fieldId;
+  final String idPartida;
+  final String idUsuario;
+
+  @override
+  State<_ReservationDayScreen> createState() => _ReservationDayScreenState();
+}
+
+class _ReservationDayScreenState extends State<_ReservationDayScreen> {
+  late final DateTime _today;
+  late DateTime _visibleMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _today = _dateOnly(DateTime.now());
+    _visibleMonth = DateTime(_today.year, _today.month);
+  }
+
+  bool get _canGoToPreviousMonth {
+    final firstVisibleMonth = DateTime(_visibleMonth.year, _visibleMonth.month);
+    final currentMonth = DateTime(_today.year, _today.month);
+    return firstVisibleMonth.isAfter(currentMonth);
+  }
+
+  void _goToPreviousMonth() {
+    if (!_canGoToPreviousMonth) {
+      return;
+    }
+
+    setState(() {
+      _visibleMonth = DateTime(_visibleMonth.year, _visibleMonth.month - 1);
+    });
+  }
+
+  void _goToNextMonth() {
+    setState(() {
+      _visibleMonth = DateTime(_visibleMonth.year, _visibleMonth.month + 1);
+    });
+  }
+
+  void _selectDay(DateTime day) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _ReservationTimeScreen(
+          selectedDay: day,
+          agendaDay: _formatAgendaDay(day),
+          datosServidorService: widget.datosServidorService,
+          fieldId: widget.fieldId,
+          idPartida: widget.idPartida,
+          idUsuario: widget.idUsuario,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Selecciona el día',
+      children: [
+        Row(
+          children: [
+            IconButton(
+              onPressed: _canGoToPreviousMonth ? _goToPreviousMonth : null,
+              tooltip: 'Mes anterior',
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Expanded(
+              child: Text(
+                _monthLabel(_visibleMonth),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF545B66),
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: _goToNextMonth,
+              tooltip: 'Mes siguiente',
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _ReservationMonthCalendar(
+          visibleMonth: _visibleMonth,
+          today: _today,
+          onDaySelected: _selectDay,
+        ),
+        const SizedBox(height: 22),
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).pop(),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF6B432D),
+            side: const BorderSide(color: Color(0xFF6B432D)),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: const Icon(Icons.arrow_back),
+          label: const Text('Volver'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReservationMonthCalendar extends StatelessWidget {
+  const _ReservationMonthCalendar({
+    required this.visibleMonth,
+    required this.today,
+    required this.onDaySelected,
+  });
+
+  final DateTime visibleMonth;
+  final DateTime today;
+  final ValueChanged<DateTime> onDaySelected;
+
+  @override
+  Widget build(BuildContext context) {
+    const weekDays = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+    final daysInMonth = DateUtils.getDaysInMonth(
+      visibleMonth.year,
+      visibleMonth.month,
+    );
+    final firstDay = DateTime(visibleMonth.year, visibleMonth.month);
+    final leadingEmptyDays = firstDay.weekday - DateTime.monday;
+    final itemCount = leadingEmptyDays + daysInMonth;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            for (final dayName in weekDays)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    dayName,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF6C737D),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+            childAspectRatio: 1.05,
+          ),
+          itemCount: itemCount,
+          itemBuilder: (context, index) {
+            if (index < leadingEmptyDays) {
+              return const SizedBox.shrink();
+            }
+
+            final dayNumber = index - leadingEmptyDays + 1;
+            final day = DateTime(
+              visibleMonth.year,
+              visibleMonth.month,
+              dayNumber,
+            );
+            final isPast = day.isBefore(today);
+            final isToday = _isSameDay(day, today);
+
+            return TextButton(
+              key: ValueKey('reservation_day_${_formatAgendaDay(day)}'),
+              onPressed: isPast ? null : () => onDaySelected(day),
+              style: TextButton.styleFrom(
+                foregroundColor: isPast
+                    ? const Color(0xFFB7B1A8)
+                    : const Color(0xFF235C3D),
+                disabledForegroundColor: const Color(0xFFB7B1A8),
+                backgroundColor: isToday
+                    ? const Color(0xFFE6EFE0)
+                    : Colors.transparent,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size.square(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(
+                    color: isToday
+                        ? const Color(0xFF567B37)
+                        : const Color(0xFFD8D2C7),
+                  ),
+                ),
+              ),
+              child: Text(
+                '$dayNumber',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _ReservationTimeScreen extends StatefulWidget {
+  const _ReservationTimeScreen({
+    required this.selectedDay,
+    required this.agendaDay,
+    required this.datosServidorService,
+    required this.fieldId,
+    required this.idPartida,
+    required this.idUsuario,
+  });
+
+  final DateTime selectedDay;
+  final String agendaDay;
+  final DatosServidorService datosServidorService;
+  final String fieldId;
+  final String idPartida;
+  final String idUsuario;
+
+  @override
+  State<_ReservationTimeScreen> createState() => _ReservationTimeScreenState();
+}
+
+class _ReservationTimeScreenState extends State<_ReservationTimeScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _timeController = TextEditingController();
+  List<_AgendaSlot> _occupiedSlots = const [];
+  bool _isLoadingAgenda = true;
+  int? _agendaLapsusMinutes;
+  int? _agendaStartMinutes;
+  int? _agendaEndMinutes;
+  String? _agendaError;
+  String? _timeAdjustmentError;
+  String? _timeStatusMessage;
+  String? _reservationError;
+  bool _isReserving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadAgenda());
+  }
+
+  @override
+  void dispose() {
+    _timeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAgenda() async {
+    setState(() {
+      _isLoadingAgenda = true;
+      _agendaLapsusMinutes = null;
+      _agendaStartMinutes = null;
+      _agendaEndMinutes = null;
+      _agendaError = null;
+      _timeAdjustmentError = null;
+      _timeStatusMessage = null;
+      _reservationError = null;
+    });
+
+    try {
+      final responses = await Future.wait([
+        widget.datosServidorService.obtenerAgenda(widget.agendaDay),
+        widget.datosServidorService.cojeConfiguracionCampos(
+          widget.fieldId,
+          'lapsus_agenda',
+        ),
+        widget.datosServidorService.cojeConfiguracionCampos(
+          widget.fieldId,
+          'agenda_desde',
+        ),
+        widget.datosServidorService.cojeConfiguracionCampos(
+          widget.fieldId,
+          'agenda_hasta',
+        ),
+      ]);
+      final response = responses[0];
+      final agendaLapsusMinutes = _parsePositiveMinutes(responses[1]);
+      if (agendaLapsusMinutes == null) {
+        throw FormatException('lapsus_agenda no valido: ${responses[1]}');
+      }
+      final agendaStartMinutes = _parseConfiguredTime(responses[2]);
+      final agendaEndMinutes = _parseConfiguredTime(responses[3]);
+      if (agendaStartMinutes == null ||
+          agendaEndMinutes == null ||
+          agendaStartMinutes >= agendaEndMinutes) {
+        throw FormatException(
+          'rango de agenda no valido: ${responses[2]} - ${responses[3]}',
+        );
+      }
+
+      final slots = _agendaSlotsFromResponse(response).toList()
+        ..sort((left, right) => left.desde.compareTo(right.desde));
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _occupiedSlots = slots;
+        _agendaLapsusMinutes = agendaLapsusMinutes;
+        _agendaStartMinutes = agendaStartMinutes;
+        _agendaEndMinutes = agendaEndMinutes;
+        _isLoadingAgenda = false;
+      });
+    } catch (error) {
+      debugPrint('cargar agenda ${widget.agendaDay} fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoadingAgenda = false;
+        _agendaLapsusMinutes = null;
+        _agendaStartMinutes = null;
+        _agendaEndMinutes = null;
+        _agendaError = 'No se pudo cargar la agenda.';
+      });
+    }
+  }
+
+  void _checkTime() {
+    final currentMinutes = _parseTimeInput(_timeController.text);
+    String? adjustmentError;
+
+    if (!_isLoadingAgenda && _agendaError == null && currentMinutes != null) {
+      final adjustedMinutes = _nearestAvailableRoundedMinute(currentMinutes);
+      if (adjustedMinutes == null) {
+        adjustmentError = 'No hay una hora libre cercana';
+      } else {
+        _setTimeControllerMinutes(adjustedMinutes);
+      }
+    }
+
+    setState(() {
+      _timeAdjustmentError = adjustmentError;
+      _timeStatusMessage = null;
+    });
+
+    final isAvailable = _formKey.currentState?.validate() ?? false;
+    setState(() {
+      _timeStatusMessage = isAvailable ? 'Hora disponible' : null;
+      _reservationError = null;
+    });
+  }
+
+  bool get _canReserve => _timeStatusMessage == 'Hora disponible';
+
+  Future<void> _reserveTime() async {
+    final isAvailable = _formKey.currentState?.validate() ?? false;
+    final startMinutes = _parseTimeInput(_timeController.text);
+    final agendaLapsusMinutes = _agendaLapsusMinutes;
+    if (!isAvailable || startMinutes == null || agendaLapsusMinutes == null) {
+      setState(() {
+        _timeStatusMessage = null;
+        _reservationError = null;
+      });
+      return;
+    }
+
+    final endMinutes = startMinutes + agendaLapsusMinutes;
+    final desde = _formatCompactMinuteOfDay(startMinutes);
+    final hasta = _formatCompactMinuteOfDay(endMinutes);
+
+    setState(() {
+      _isReserving = true;
+      _reservationError = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.insertarAgenda(
+        dia: widget.agendaDay,
+        desde: desde,
+        hasta: hasta,
+        idPartida: widget.idPartida,
+        idUsuarioCreador: widget.idUsuario,
+      );
+
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => _ReservationSuccessScreen(
+            selectedDay: widget.selectedDay,
+            desde: desde,
+            hasta: hasta,
+          ),
+        ),
+      );
+    } catch (error) {
+      debugPrint('insertar agenda ${widget.agendaDay} fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _reservationError = 'No se pudo efectuar la reserva.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isReserving = false;
+        });
+      }
+    }
+  }
+
+  String? _validateTime(String? rawValue) {
+    if (_isLoadingAgenda) {
+      return 'Agenda cargando';
+    }
+
+    if (_agendaError != null) {
+      return 'Agenda no disponible';
+    }
+
+    final agendaLapsusMinutes = _agendaLapsusMinutes;
+    if (agendaLapsusMinutes == null ||
+        _agendaStartMinutes == null ||
+        _agendaEndMinutes == null) {
+      return 'Agenda no disponible';
+    }
+
+    if (_timeAdjustmentError != null) {
+      return _timeAdjustmentError;
+    }
+
+    final minutes = _parseTimeInput(rawValue);
+    if (minutes == null) {
+      return 'Introduce una hora valida (HH:mm o HHmm)';
+    }
+
+    final endMinutes = minutes + agendaLapsusMinutes;
+    if (!_rangeIsInsideAgenda(minutes, endMinutes)) {
+      return 'Hora fuera de horario';
+    }
+
+    final occupiedSlot = _occupiedSlotForRange(minutes, endMinutes);
+    if (occupiedSlot != null) {
+      return 'Hora ocupada (${occupiedSlot.formattedRange})';
+    }
+
+    return null;
+  }
+
+  int? _nearestAvailableRoundedMinute(int inputMinutes) {
+    final agendaLapsusMinutes = _agendaLapsusMinutes;
+    final agendaStartMinutes = _agendaStartMinutes;
+    final agendaEndMinutes = _agendaEndMinutes;
+    if (agendaLapsusMinutes == null ||
+        agendaStartMinutes == null ||
+        agendaEndMinutes == null) {
+      return null;
+    }
+
+    final candidates = <int>[];
+    for (
+      var candidate = agendaStartMinutes;
+      candidate + agendaLapsusMinutes <= agendaEndMinutes;
+      candidate += agendaLapsusMinutes
+    ) {
+      candidates.add(candidate);
+    }
+
+    candidates.sort((left, right) {
+      final leftDistance = (left - inputMinutes).abs();
+      final rightDistance = (right - inputMinutes).abs();
+      if (leftDistance != rightDistance) {
+        return leftDistance.compareTo(rightDistance);
+      }
+
+      return right.compareTo(left);
+    });
+
+    for (final candidate in candidates) {
+      final candidateEnd = candidate + agendaLapsusMinutes;
+      if (_occupiedSlotForRange(candidate, candidateEnd) != null) {
+        continue;
+      }
+
+      return candidate;
+    }
+
+    return null;
+  }
+
+  void _setTimeControllerMinutes(int minutes) {
+    final text = _formatMinuteOfDay(minutes);
+    _timeController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  bool _rangeIsInsideAgenda(int startMinutes, int endMinutes) {
+    final agendaStartMinutes = _agendaStartMinutes;
+    final agendaEndMinutes = _agendaEndMinutes;
+    if (agendaStartMinutes == null || agendaEndMinutes == null) {
+      return false;
+    }
+
+    return startMinutes >= agendaStartMinutes && endMinutes <= agendaEndMinutes;
+  }
+
+  _AgendaSlot? _occupiedSlotForRange(int startMinutes, int endMinutes) {
+    for (final slot in _occupiedSlots) {
+      if (slot.intersectsRange(startMinutes, endMinutes)) {
+        return slot;
+      }
+    }
+
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Reservar Partida',
+      maxWidth: 620,
+      children: [
+        Text(
+          _formatDisplayDate(widget.selectedDay),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 16, color: Color(0xFF6C737D)),
+        ),
+        const SizedBox(height: 22),
+        if (_isLoadingAgenda)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: CircularProgressIndicator(color: Color(0xFF567B37)),
+            ),
+          )
+        else if (_agendaError != null) ...[
+          Text(
+            _agendaError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _loadAgenda,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF567B37),
+              side: const BorderSide(color: Color(0xFF567B37)),
+              padding: const EdgeInsets.symmetric(vertical: 18),
+            ),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ] else ...[
+          const Text(
+            'Disponibilidad',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF545B66),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _AgendaAvailabilityBand(
+            startMinutes: _agendaStartMinutes!,
+            endMinutes: _agendaEndMinutes!,
+            occupiedSlots: _occupiedSlots,
+          ),
+          const SizedBox(height: 24),
+          Form(
+            key: _formKey,
+            child: TextFormField(
+              controller: _timeController,
+              keyboardType: TextInputType.number,
+              inputFormatters: const [_ReservationTimeInputFormatter()],
+              onChanged: (_) {
+                if (_timeStatusMessage == null &&
+                    _timeAdjustmentError == null &&
+                    _reservationError == null) {
+                  return;
+                }
+
+                setState(() {
+                  _timeAdjustmentError = null;
+                  _timeStatusMessage = null;
+                  _reservationError = null;
+                });
+              },
+              validator: _validateTime,
+              decoration: InputDecoration(
+                labelText: 'Hora',
+                filled: true,
+                fillColor: const Color.fromRGBO(255, 255, 255, 0.72),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFD8D2C7)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: Color(0xFF567B37),
+                    width: 2,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_timeStatusMessage != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _timeStatusMessage!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF567B37)),
+            ),
+          ],
+          if (_reservationError != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _reservationError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+            ),
+          ],
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: _isReserving
+                ? null
+                : _canReserve
+                ? _reserveTime
+                : _checkTime,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF567B37),
+              disabledBackgroundColor: const Color(0xFFBBC5B0),
+              padding: const EdgeInsets.symmetric(vertical: 18),
+            ),
+            icon: _isReserving
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(_canReserve ? Icons.event_available : Icons.check),
+            label: Text(
+              _isReserving
+                  ? 'Reservando...'
+                  : _canReserve
+                  ? 'Reservar'
+                  : 'Comprobar ahora',
+            ),
+          ),
+        ],
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).pop(),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF6B432D),
+            side: const BorderSide(color: Color(0xFF6B432D)),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: const Icon(Icons.arrow_back),
+          label: const Text('Volver'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AgendaAvailabilityBand extends StatelessWidget {
+  const _AgendaAvailabilityBand({
+    required this.startMinutes,
+    required this.endMinutes,
+    required this.occupiedSlots,
+  });
+
+  static const _freeColor = Color(0xFF6FA34B);
+  static const _occupiedColor = Color(0xFFC9554E);
+
+  final int startMinutes;
+  final int endMinutes;
+  final List<_AgendaSlot> occupiedSlots;
+
+  @override
+  Widget build(BuildContext context) {
+    final segments = _agendaBandSegments(
+      startMinutes: startMinutes,
+      endMinutes: endMinutes,
+      occupiedSlots: occupiedSlots,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              _formatMinuteOfDay(startMinutes),
+              style: const TextStyle(fontSize: 13, color: Color(0xFF6C737D)),
+            ),
+            Text(
+              _formatMinuteOfDay(endMinutes),
+              style: const TextStyle(fontSize: 13, color: Color(0xFF6C737D)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Container(
+          height: 34,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFD8D2C7)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final segment in segments)
+                Expanded(
+                  flex: segment.durationMinutes,
+                  child: segment.isOccupied
+                      ? _bandSegmentBox(segment)
+                      : Tooltip(
+                          message:
+                              'libre de ${_formatMinuteOfDay(segment.startMinutes)} '
+                              'a ${_formatMinuteOfDay(segment.endMinutes)}',
+                          triggerMode: TooltipTriggerMode.tap,
+                          waitDuration: const Duration(milliseconds: 350),
+                          showDuration: const Duration(seconds: 3),
+                          child: _bandSegmentBox(segment),
+                        ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _legendItem(_freeColor, 'Libre'),
+            const SizedBox(width: 16),
+            _legendItem(_occupiedColor, 'Ocupado'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _bandSegmentBox(_AgendaBandSegment segment) {
+    return DecoratedBox(
+      key: ValueKey(segment.key),
+      decoration: BoxDecoration(
+        color: segment.isOccupied ? _occupiedColor : _freeColor,
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+
+  Widget _legendItem(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF6C737D)),
+        ),
+      ],
+    );
+  }
+}
+
+class _AgendaBandSegment {
+  const _AgendaBandSegment({
+    required this.startMinutes,
+    required this.endMinutes,
+    required this.isOccupied,
+  });
+
+  final int startMinutes;
+  final int endMinutes;
+  final bool isOccupied;
+
+  int get durationMinutes => endMinutes - startMinutes;
+
+  String get key {
+    final kind = isOccupied ? 'occupied' : 'free';
+    return 'agenda_band_${kind}_${_formatCompactMinuteOfDay(startMinutes)}'
+        '_${_formatCompactMinuteOfDay(endMinutes)}';
+  }
+}
+
+class _ReservationSuccessScreen extends StatelessWidget {
+  const _ReservationSuccessScreen({
+    required this.selectedDay,
+    required this.desde,
+    required this.hasta,
+  });
+
+  final DateTime selectedDay;
+  final String desde;
+  final String hasta;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Reserva efectuada',
+      children: [
+        const Icon(Icons.event_available, color: Color(0xFF567B37), size: 56),
+        const SizedBox(height: 12),
+        Text(
+          '${_formatDisplayDate(selectedDay)}\n${_formatCompactTime(desde)}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF545B66),
+          ),
+        ),
+        const SizedBox(height: 22),
+        FilledButton.icon(
+          onPressed: () {
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          },
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF567B37),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: const Icon(Icons.check),
+          label: const Text('Entendido'),
+        ),
+      ],
     );
   }
 }
@@ -1343,6 +2403,10 @@ bool _backendResponseSaysYes(String response) {
   return rpta == 'si' || rpta == 'sí';
 }
 
+bool _backendResponseIsOk(String response) {
+  return _backendResponseValue(response) == 'ok';
+}
+
 _UserRegistrationResult _userRegistrationResultFromBackend(String response) {
   final rpta = _backendResponseValue(response);
   if (rpta != 'ok') {
@@ -1420,6 +2484,389 @@ String? _backendResponseField(String response, String key) {
     '''['"]${RegExp.escape(key)}['"]\\s*:\\s*['"]([^'"]+)['"]''',
     caseSensitive: false,
   ).firstMatch(trimmedResponse)?.group(1)?.trim();
+}
+
+class _ReservationTimeInputFormatter extends TextInputFormatter {
+  const _ReservationTimeInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final limitedDigits = digits.length <= 4 ? digits : digits.substring(0, 4);
+    final formatted = _formatTimeInputDigits(limitedDigits);
+
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+String _formatTimeInputDigits(String digits) {
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  final hourDigits = digits.substring(0, digits.length - 2);
+  final minuteDigits = digits.substring(digits.length - 2);
+  return '$hourDigits:$minuteDigits';
+}
+
+const _spanishMonthNames = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+
+DateTime _dateOnly(DateTime value) {
+  return DateTime(value.year, value.month, value.day);
+}
+
+bool _isSameDay(DateTime left, DateTime right) {
+  return left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
+}
+
+String _monthLabel(DateTime day) {
+  return '${_spanishMonthNames[day.month - 1]} ${day.year}';
+}
+
+String _formatAgendaDay(DateTime day) {
+  return '${_twoDigits(day.year % 100)}'
+      '${_twoDigits(day.month)}'
+      '${_twoDigits(day.day)}';
+}
+
+String _formatDisplayDate(DateTime day) {
+  return '${_twoDigits(day.day)}/${_twoDigits(day.month)}/${day.year}';
+}
+
+String _twoDigits(int value) {
+  return value.toString().padLeft(2, '0');
+}
+
+List<_AgendaSlot> _agendaSlotsFromResponse(String response) {
+  final rows = _decodeAgendaRows(response, 0) ?? const [];
+  return [for (final row in rows) ?_AgendaSlot.fromMap(row)];
+}
+
+List<_CreatedGameInfo> _createdGamesFromResponse(String response) {
+  final rows = _decodeMapRows(response, 0) ?? const [];
+  return [for (final row in rows) ?_CreatedGameInfo.fromMap(row)];
+}
+
+List<Map<String, dynamic>>? _decodeAgendaRows(Object? payload, int depth) {
+  return _decodeMapRows(payload, depth);
+}
+
+List<Map<String, dynamic>>? _decodeMapRows(Object? payload, int depth) {
+  if (depth > 4) {
+    return null;
+  }
+
+  if (payload is String) {
+    final trimmedPayload = payload.trim();
+    if (trimmedPayload.isEmpty) {
+      return const [];
+    }
+
+    final decoded = _decodeJsonLikePayload(trimmedPayload);
+    return decoded == null ? null : _decodeMapRows(decoded, depth + 1);
+  }
+
+  if (payload is List) {
+    return payload.whereType<Map>().map(_stringKeyedMap).toList();
+  }
+
+  if (payload is Map) {
+    final map = _stringKeyedMap(payload);
+    for (final key in const ['agenda', 'data', 'valor', 'json']) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
+
+      final rows = _decodeMapRows(map[key], depth + 1);
+      if (rows != null) {
+        return rows;
+      }
+    }
+  }
+
+  return null;
+}
+
+Object? _decodeJsonLikePayload(String rawPayload) {
+  try {
+    return jsonDecode(rawPayload);
+  } catch (_) {
+    // La agenda del backend puede llegar como JSON con comillas simples.
+  }
+
+  try {
+    return jsonDecode(rawPayload.replaceAll("'", '"'));
+  } catch (_) {
+    return null;
+  }
+}
+
+int? _parseTimeInput(String? rawValue) {
+  final value = rawValue?.trim() ?? '';
+  if (value.isEmpty) {
+    return null;
+  }
+
+  final colonMatch = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(value);
+  if (colonMatch != null) {
+    return _minutesFromHourMinute(colonMatch.group(1)!, colonMatch.group(2)!);
+  }
+
+  final digitsMatch = RegExp(r'^\d{3,4}$').firstMatch(value);
+  if (digitsMatch == null) {
+    return null;
+  }
+
+  final hourText = value.substring(0, value.length - 2);
+  final minuteText = value.substring(value.length - 2);
+  return _minutesFromHourMinute(hourText, minuteText);
+}
+
+int? _minutesFromCompactTime(String value) {
+  if (!RegExp(r'^\d{4}$').hasMatch(value)) {
+    return null;
+  }
+
+  return _minutesFromHourMinute(value.substring(0, 2), value.substring(2));
+}
+
+int? _minutesFromHourMinute(String hourText, String minuteText) {
+  final hour = int.tryParse(hourText);
+  final minute = int.tryParse(minuteText);
+  if (hour == null ||
+      minute == null ||
+      hour < 0 ||
+      hour > 23 ||
+      minute < 0 ||
+      minute > 59) {
+    return null;
+  }
+
+  return hour * 60 + minute;
+}
+
+int? _parsePositiveMinutes(String rawValue) {
+  final directValue = int.tryParse(rawValue.trim());
+  if (directValue != null && directValue > 0) {
+    return directValue;
+  }
+
+  final decodedValue = _decodeJsonLikePayload(rawValue.trim());
+  if (decodedValue is num && decodedValue > 0) {
+    return decodedValue.toInt();
+  }
+
+  if (decodedValue is String) {
+    final value = int.tryParse(decodedValue.trim());
+    if (value != null && value > 0) {
+      return value;
+    }
+  }
+
+  if (decodedValue is Map) {
+    final map = _stringKeyedMap(decodedValue);
+    for (final key in const ['lapsus_agenda', 'valor', 'rpta']) {
+      final value = int.tryParse('${map[key] ?? ''}'.trim());
+      if (value != null && value > 0) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+int? _parseConfiguredTime(String rawValue) {
+  final trimmedValue = rawValue.trim();
+  final directValue = _parseTimeInput(trimmedValue);
+  if (directValue != null) {
+    return directValue;
+  }
+
+  final decodedValue = _decodeJsonLikePayload(trimmedValue);
+  if (decodedValue is String) {
+    return _parseTimeInput(decodedValue);
+  }
+
+  if (decodedValue is Map) {
+    final map = _stringKeyedMap(decodedValue);
+    for (final key in const ['agenda_desde', 'agenda_hasta', 'valor', 'rpta']) {
+      final value = _parseTimeInput('${map[key] ?? ''}'.trim());
+      if (value != null) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+String _formatCompactTime(String value) {
+  if (value.length != 4) {
+    return value;
+  }
+
+  return '${value.substring(0, 2)}:${value.substring(2)}';
+}
+
+String _formatMinuteOfDay(int minutes) {
+  final hour = minutes ~/ 60;
+  final minute = minutes % 60;
+  return '${_twoDigits(hour)}:${_twoDigits(minute)}';
+}
+
+String _formatCompactMinuteOfDay(int minutes) {
+  final hour = minutes ~/ 60;
+  final minute = minutes % 60;
+  return '${_twoDigits(hour)}${_twoDigits(minute)}';
+}
+
+List<_AgendaBandSegment> _agendaBandSegments({
+  required int startMinutes,
+  required int endMinutes,
+  required List<_AgendaSlot> occupiedSlots,
+}) {
+  if (startMinutes >= endMinutes) {
+    return const [];
+  }
+
+  final occupiedSegments = <_AgendaBandSegment>[];
+  for (final slot in occupiedSlots) {
+    final clippedStart = max(startMinutes, slot.startMinutes);
+    final clippedEnd = min(endMinutes, slot.endMinutes);
+    if (clippedEnd <= clippedStart) {
+      continue;
+    }
+
+    occupiedSegments.add(
+      _AgendaBandSegment(
+        startMinutes: clippedStart,
+        endMinutes: clippedEnd,
+        isOccupied: true,
+      ),
+    );
+  }
+
+  occupiedSegments.sort(
+    (left, right) => left.startMinutes.compareTo(right.startMinutes),
+  );
+
+  final mergedOccupiedSegments = <_AgendaBandSegment>[];
+  for (final segment in occupiedSegments) {
+    if (mergedOccupiedSegments.isEmpty ||
+        segment.startMinutes > mergedOccupiedSegments.last.endMinutes) {
+      mergedOccupiedSegments.add(segment);
+      continue;
+    }
+
+    final last = mergedOccupiedSegments.last;
+    if (segment.endMinutes > last.endMinutes) {
+      mergedOccupiedSegments[mergedOccupiedSegments.length -
+          1] = _AgendaBandSegment(
+        startMinutes: last.startMinutes,
+        endMinutes: segment.endMinutes,
+        isOccupied: true,
+      );
+    }
+  }
+
+  final segments = <_AgendaBandSegment>[];
+  var cursor = startMinutes;
+  for (final occupiedSegment in mergedOccupiedSegments) {
+    if (cursor < occupiedSegment.startMinutes) {
+      segments.add(
+        _AgendaBandSegment(
+          startMinutes: cursor,
+          endMinutes: occupiedSegment.startMinutes,
+          isOccupied: false,
+        ),
+      );
+    }
+
+    segments.add(occupiedSegment);
+    cursor = occupiedSegment.endMinutes;
+  }
+
+  if (cursor < endMinutes) {
+    segments.add(
+      _AgendaBandSegment(
+        startMinutes: cursor,
+        endMinutes: endMinutes,
+        isOccupied: false,
+      ),
+    );
+  }
+
+  return segments;
+}
+
+class _AgendaSlot {
+  const _AgendaSlot({
+    required this.desde,
+    required this.hasta,
+    required this.startMinutes,
+    required this.endMinutes,
+    required this.idPartida,
+  });
+
+  final String desde;
+  final String hasta;
+  final int startMinutes;
+  final int endMinutes;
+  final String idPartida;
+
+  static _AgendaSlot? fromMap(Map<String, dynamic> map) {
+    final desde = '${map['desde'] ?? ''}'.trim();
+    final hasta = '${map['hasta'] ?? ''}'.trim();
+    final startMinutes = _minutesFromCompactTime(desde);
+    final endMinutes = _minutesFromCompactTime(hasta);
+    if (startMinutes == null ||
+        endMinutes == null ||
+        endMinutes <= startMinutes) {
+      return null;
+    }
+
+    return _AgendaSlot(
+      desde: desde,
+      hasta: hasta,
+      startMinutes: startMinutes,
+      endMinutes: endMinutes,
+      idPartida: '${map['idPartida'] ?? ''}'.trim(),
+    );
+  }
+
+  bool intersectsRange(int rangeStartMinutes, int rangeEndMinutes) {
+    return rangeStartMinutes < endMinutes && rangeEndMinutes > startMinutes;
+  }
+
+  String get formattedRange {
+    return '${_formatCompactTime(desde)} - ${_formatCompactTime(hasta)}';
+  }
+
+  String get label {
+    return idPartida.isEmpty ? formattedRange : '$formattedRange · $idPartida';
+  }
 }
 
 String _createEmptyPlayRowsJson() {
@@ -1616,4 +3063,41 @@ class _GameSession {
   final String idCampo;
   final String jugadores;
   final String playRowsJson;
+}
+
+class _CreatedGameInfo {
+  const _CreatedGameInfo({
+    required this.idPartida,
+    required this.esCreador,
+    required this.dia,
+    required this.hora,
+    required this.idUsuarioCreador,
+    required this.aliasCreador,
+    required this.movilCreador,
+  });
+
+  final String idPartida;
+  final String esCreador;
+  final String dia;
+  final String hora;
+  final String idUsuarioCreador;
+  final String aliasCreador;
+  final String movilCreador;
+
+  static _CreatedGameInfo? fromMap(Map<String, dynamic> map) {
+    final idPartida = '${map['idPartida'] ?? ''}'.trim();
+    if (idPartida.isEmpty) {
+      return null;
+    }
+
+    return _CreatedGameInfo(
+      idPartida: idPartida,
+      esCreador: '${map['es_creador'] ?? ''}'.trim(),
+      dia: '${map['dia'] ?? ''}'.trim(),
+      hora: '${map['hora'] ?? ''}'.trim(),
+      idUsuarioCreador: '${map['idUsuarioCreador'] ?? ''}'.trim(),
+      aliasCreador: '${map['aliasCreador'] ?? ''}'.trim(),
+      movilCreador: '${map['movilCreador'] ?? ''}'.trim(),
+    );
+  }
 }

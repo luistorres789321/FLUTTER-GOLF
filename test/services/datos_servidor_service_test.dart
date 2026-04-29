@@ -141,6 +141,73 @@ void main() {
       });
     });
 
+    test('construye la query de obtenerAgenda', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("[{'desde':'1025','hasta':'1040'}]", 200);
+        }),
+      );
+
+      final result = await service.obtenerAgenda('260428');
+
+      expect(result, "[{'desde':'1025','hasta':'1040'}]");
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_agenda',
+        'dia': '260428',
+      });
+    });
+
+    test('construye la query de insertarAgenda', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.insertarAgenda(
+        dia: '260428',
+        desde: '1045',
+        hasta: '1100',
+        idPartida: 'ABC123XYZ9',
+        idUsuarioCreador: '123',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'inserta_agenda',
+        'dia': '260428',
+        'desde': '1045',
+        'hasta': '1100',
+        'idPartida': 'ABC123XYZ9',
+        'idUsuarioCreador': '123',
+      });
+    });
+
+    test('construye la query de obtenerPartidasCreadas', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("[{'idPartida':'X12345'}]", 200);
+        }),
+      );
+
+      final result = await service.obtenerPartidasCreadas('Z44456');
+
+      expect(result, "[{'idPartida':'X12345'}]");
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_partidas_creadas',
+        'idUsuario': 'Z44456',
+      });
+    });
+
     test('lanza DatosServidorException cuando el backend responde error', () {
       final service = DatosServidorService(
         client: MockClient((request) async {

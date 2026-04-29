@@ -91,6 +91,34 @@ class DatosServidorService {
     });
   }
 
+  Future<String> obtenerAgenda(String dia) {
+    return _getTexto({'accion': 'obtener_agenda', 'dia': dia});
+  }
+
+  Future<String> insertarAgenda({
+    required String dia,
+    required String desde,
+    required String hasta,
+    required String idPartida,
+    required String idUsuarioCreador,
+  }) {
+    return _getTexto({
+      'accion': 'inserta_agenda',
+      'dia': dia,
+      'desde': desde,
+      'hasta': hasta,
+      'idPartida': idPartida,
+      'idUsuarioCreador': idUsuarioCreador,
+    });
+  }
+
+  Future<String> obtenerPartidasCreadas(String idUsuario) {
+    return _getTexto({
+      'accion': 'obtener_partidas_creadas',
+      'idUsuario': idUsuario,
+    });
+  }
+
   Future<String> actualizaConfiguracionCampos(
     String idCampo,
     String parametro,
