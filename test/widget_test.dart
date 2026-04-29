@@ -111,7 +111,7 @@ void main() {
     expect(find.widgetWithText(OutlinedButton, 'Salir'), findsNothing);
   });
 
-  testWidgets('opens invite players and creates creator when list is empty', (
+  testWidgets('opens players and creates invitation game without creator', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -129,6 +129,11 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Jugadores'), findsOneWidget);
+    expect(find.text('Iniciar Salida'), findsNothing);
+    expect(find.text('Sin jugadores'), findsOneWidget);
+    expect(find.text('Auto'), findsNothing);
+    expect(find.byIcon(Icons.delete_outline), findsNothing);
     expect(
       find.widgetWithText(FilledButton, 'Invitar a jugadores'),
       findsOneWidget,
@@ -137,14 +142,6 @@ void main() {
       find.widgetWithText(OutlinedButton, 'Recibir la invitacion'),
       findsOneWidget,
     );
-
-    await tester.tap(find.widgetWithText(FilledButton, 'Invitar a jugadores'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Invitar Jugadores'), findsOneWidget);
-    expect(find.text('Auto'), findsOneWidget);
-    expect(find.byIcon(Icons.delete_outline), findsNothing);
-    expect(find.text('añadir jugador'), findsOneWidget);
 
     final createUri = requests.firstWhere(
       (uri) => uri.queryParameters['accion'] == 'crea_partida',
@@ -155,25 +152,24 @@ void main() {
     final playerRequests = requests.where(
       (uri) => uri.queryParameters['accion'] == 'obtener_jugadores_partida',
     );
-    expect(playerRequests, hasLength(2));
+    expect(playerRequests, hasLength(1));
     expect(
       playerRequests.map((uri) => uri.queryParameters['idPartida']),
       everyElement(idPartida),
     );
 
-    final annotationUri = requests.firstWhere(
-      (uri) => uri.queryParameters['accion'] == 'anota_jugador_partida',
+    expect(
+      requests.where(
+        (uri) => uri.queryParameters['accion'] == 'anota_jugador_partida',
+      ),
+      isEmpty,
     );
-    expect(annotationUri.queryParameters['idCampo'], '1');
-    expect(annotationUri.queryParameters['idPartida'], idPartida);
-    expect(annotationUri.queryParameters['idUsuario'], '123');
-    expect(annotationUri.queryParameters['es_creador'], 'S');
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('invitation_game_id'), idPartida);
     expect(prefs.getInt('invitation_game_created_at'), isNotNull);
 
-    await tester.tap(find.text('añadir jugador'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar a jugadores'));
     await tester.pumpAndSettle();
 
     expect(
@@ -190,8 +186,8 @@ void main() {
     await tester.tap(find.text('Volver'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Auto'), findsOneWidget);
-    expect(find.text('añadir jugador'), findsOneWidget);
+    expect(find.text('Sin jugadores'), findsOneWidget);
+    expect(find.text('Invitar a jugadores'), findsOneWidget);
   });
 
   testWidgets('loads created games and enables pending games button', (
