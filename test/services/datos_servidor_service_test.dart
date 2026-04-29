@@ -102,6 +102,52 @@ void main() {
       });
     });
 
+    test('construye la query de obtenerJugadoresPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("[{'idJugador':'Z12345'}]", 200);
+        }),
+      );
+
+      final result = await service.obtenerJugadoresPartida('ABC123XYZ9');
+
+      expect(result, "[{'idJugador':'Z12345'}]");
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_jugadores_partida',
+        'idPartida': 'ABC123XYZ9',
+      });
+    });
+
+    test('construye la query de anotaJugadorPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.anotaJugadorPartida(
+        idCampo: '1',
+        idPartida: 'ABC123XYZ9',
+        idUsuario: 'Z12345',
+        esCreador: 'S',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'anota_jugador_partida',
+        'idCampo': '1',
+        'idPartida': 'ABC123XYZ9',
+        'idUsuario': 'Z12345',
+        'es_creador': 'S',
+      });
+    });
+
     test('construye la query de altaUsuario', () async {
       late Uri requestedUri;
 

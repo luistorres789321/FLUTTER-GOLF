@@ -4,6 +4,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'golf_scorecard_screen.dart';
@@ -57,15 +59,18 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   static const _savedFieldIdKey = 'saved_field_id';
   static const _savedPlayersKey = 'saved_players';
   static const _savedGameRowsKey = 'saved_game_rows_json';
+  static const _invitationGameIdKey = 'invitation_game_id';
+  static const _invitationGameCreatedAtKey = 'invitation_game_created_at';
   static const _defaultFieldId = '1';
   static const _defaultPlayers = '3';
   static const _jsonHoyosPollDelay = Duration(seconds: 5);
+  static const _invitationGameLifetime = Duration(hours: 2);
 
   late final DatosServidorService _datosServidorService;
   late final bool _ownsDatosServidorService;
   int _jsonHoyosPollingGeneration = 0;
+  Timer? _jsonHoyosPollingTimer;
   bool _isLoading = true;
-  bool _isCreatingGame = false;
   String? _savedGameId;
   String _savedFieldId = _defaultFieldId;
   String _savedPlayers = _defaultPlayers;
@@ -105,6 +110,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     final savedPlayers = prefs.getString(_savedPlayersKey) ?? _defaultPlayers;
     final savedRowsJson =
         prefs.getString(_savedGameRowsKey) ?? _createEmptyPlayRowsJson();
+    await _validInvitationGameIdFromPrefs(prefs);
     final userInformation = _UserInformation.fromJsonString(
       prefs.getString(_savedUserInformationKey),
     );
@@ -132,6 +138,46 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     if (isUserRegistered && userInformation.idUsuario.isNotEmpty) {
       unawaited(_loadCreatedGames(userInformation.idUsuario));
     }
+  }
+
+  Future<String?> _validInvitationGameIdFromPrefs(
+    SharedPreferences prefs,
+  ) async {
+    final idPartida = prefs.getString(_invitationGameIdKey)?.trim();
+    final createdAt = prefs.getInt(_invitationGameCreatedAtKey);
+    if (idPartida == null || idPartida.isEmpty || createdAt == null) {
+      await _clearInvitationGameId(prefs);
+      return null;
+    }
+
+    final createdAtDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
+    final isExpired =
+        DateTime.now().difference(createdAtDate) >= _invitationGameLifetime;
+    if (isExpired) {
+      await _clearInvitationGameId(prefs);
+      return null;
+    }
+
+    return idPartida;
+  }
+
+  Future<String?> _loadValidInvitationGameId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return _validInvitationGameIdFromPrefs(prefs);
+  }
+
+  Future<void> _storeInvitationGameId(String idPartida) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_invitationGameIdKey, idPartida);
+    await prefs.setInt(
+      _invitationGameCreatedAtKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Future<void> _clearInvitationGameId(SharedPreferences prefs) async {
+    await prefs.remove(_invitationGameIdKey);
+    await prefs.remove(_invitationGameCreatedAtKey);
   }
 
   Future<void> _saveUserInformation(
@@ -216,54 +262,33 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     });
   }
 
-  Future<void> _startNewGame() async {
-    final newId = _generateGameId();
-    const fieldId = _defaultFieldId;
-    const players = _defaultPlayers;
-    final newRowsJson = _createEmptyPlayRowsJson();
+  void _openStartRoundOptions() {
+    final idUsuario = _userInformation?.idUsuario ?? '';
+    if (idUsuario.isEmpty) {
+      setState(() {
+        _creationError = 'No se pudo identificar el usuario para iniciar.';
+        _userRegistrationError = null;
+      });
+      return;
+    }
 
     setState(() {
-      _isCreatingGame = true;
       _creationError = null;
+      _userRegistrationError = null;
     });
 
-    try {
-      await _datosServidorService.creaPartida(fieldId, newId, players);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_savedGameIdKey, newId);
-      await prefs.setString(_savedFieldIdKey, fieldId);
-      await prefs.setString(_savedPlayersKey, players);
-      await prefs.setString(_savedGameRowsKey, newRowsJson);
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isCreatingGame = false;
-        _savedGameId = newId;
-        _savedFieldId = fieldId;
-        _savedPlayers = players;
-        _savedRowsJson = newRowsJson;
-        _differentRemotePlayRowsJson = null;
-        _activeSession = _GameSession(
-          idPartida: newId,
-          idCampo: fieldId,
-          jugadores: players,
-          playRowsJson: newRowsJson,
-        );
-      });
-      _startJsonHoyosPolling();
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isCreatingGame = false;
-        _creationError = 'No se pudo crear la partida en el servidor.';
-      });
-    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _StartRoundOptionsScreen(
+          datosServidorService: _datosServidorService,
+          fieldId: _savedFieldId,
+          idUsuario: idUsuario,
+          loadValidInvitationGameId: _loadValidInvitationGameId,
+          generateIdPartida: _generateGameId,
+          onInvitationGameCreated: _storeInvitationGameId,
+        ),
+      ),
+    );
   }
 
   void _recoverGame() {
@@ -385,41 +410,49 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     }
 
     final generation = ++_jsonHoyosPollingGeneration;
+    _jsonHoyosPollingTimer?.cancel();
     unawaited(_pollJsonHoyos(generation));
   }
 
   void _stopJsonHoyosPolling() {
     _jsonHoyosPollingGeneration++;
+    _jsonHoyosPollingTimer?.cancel();
+    _jsonHoyosPollingTimer = null;
   }
 
   Future<void> _pollJsonHoyos(int generation) async {
-    while (mounted && generation == _jsonHoyosPollingGeneration) {
-      final session = _activeSession;
-      if (session == null) {
-        return;
-      }
+    if (!mounted || generation != _jsonHoyosPollingGeneration) {
+      return;
+    }
 
-      try {
-        final respuesta = await _datosServidorService.obtenerJsonHoyos(
-          session.idCampo,
-          session.idPartida,
-        );
+    final session = _activeSession;
+    if (session == null) {
+      return;
+    }
 
-        if (!mounted || generation != _jsonHoyosPollingGeneration) {
-          return;
-        }
-
-        await _applyRemotePlayRowsJson(session, respuesta);
-      } catch (error) {
-        debugPrint('obtenerJsonHoyos error: $error');
-      }
+    try {
+      final respuesta = await _datosServidorService.obtenerJsonHoyos(
+        session.idCampo,
+        session.idPartida,
+      );
 
       if (!mounted || generation != _jsonHoyosPollingGeneration) {
         return;
       }
 
-      await Future<void>.delayed(_jsonHoyosPollDelay);
+      await _applyRemotePlayRowsJson(session, respuesta);
+    } catch (error) {
+      debugPrint('obtenerJsonHoyos error: $error');
     }
+
+    if (!mounted || generation != _jsonHoyosPollingGeneration) {
+      return;
+    }
+
+    _jsonHoyosPollingTimer?.cancel();
+    _jsonHoyosPollingTimer = Timer(_jsonHoyosPollDelay, () {
+      unawaited(_pollJsonHoyos(generation));
+    });
   }
 
   Future<void> _applyRemotePlayRowsJson(
@@ -468,6 +501,23 @@ class _GolfAppHomeState extends State<GolfAppHome> {
         activeSession.idPartida == session.idPartida;
   }
 
+  void _exitActiveSession() {
+    if (_activeSession == null) {
+      return;
+    }
+
+    _stopJsonHoyosPolling();
+    setState(() {
+      _activeSession = null;
+      _differentRemotePlayRowsJson = null;
+    });
+
+    final idUsuario = _userInformation?.idUsuario;
+    if (_isUserRegistered && idUsuario != null && idUsuario.isNotEmpty) {
+      unawaited(_loadCreatedGames(idUsuario));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_activeSession case final session?) {
@@ -476,7 +526,9 @@ class _GolfAppHomeState extends State<GolfAppHome> {
         jugadores: session.jugadores,
         initialPlayRowsJson: session.playRowsJson,
         differentRemotePlayRowsJson: _differentRemotePlayRowsJson,
+        datosServidorService: _datosServidorService,
         onPlayRowsJsonChanged: _savePlayRowsJson,
+        onExit: _exitActiveSession,
       );
     }
 
@@ -599,13 +651,13 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                   ),
                                 ),
                                 icon: const Icon(Icons.restore),
-                                label: const Text('Recuperar partida'),
+                                label: const Text('Recuperar Ronda'),
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
-                                onPressed: _isCreatingGame || !canUseGameActions
-                                    ? null
-                                    : _startNewGame,
+                                onPressed: canUseGameActions
+                                    ? _openStartRoundOptions
+                                    : null,
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: const Color(0xFF6B432D),
                                   side: const BorderSide(
@@ -616,11 +668,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                   ),
                                 ),
                                 icon: const Icon(Icons.play_arrow),
-                                label: Text(
-                                  _isCreatingGame
-                                      ? 'Creando partida...'
-                                      : 'Iniciar nueva partida',
-                                ),
+                                label: const Text('Iniciar Salida'),
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
@@ -637,7 +685,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                   ),
                                 ),
                                 icon: const Icon(Icons.event_available),
-                                label: const Text('Reservar Partida'),
+                                label: const Text('Reservar Salida'),
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
@@ -663,7 +711,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                   ),
                                 ),
                                 icon: const Icon(Icons.event_note),
-                                label: const Text('Partidas Pendientes'),
+                                label: const Text('Salidas Pendientes'),
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
@@ -772,16 +820,43 @@ class _GolfLogo extends StatelessWidget {
   }
 }
 
+class _TopLeftBackButton extends StatelessWidget {
+  const _TopLeftBackButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFF6B432D),
+          side: const BorderSide(color: Color(0xFF6B432D)),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+        icon: const Icon(Icons.arrow_back),
+        label: const Text('Volver'),
+      ),
+    );
+  }
+}
+
 class _ReservationScreenFrame extends StatelessWidget {
   const _ReservationScreenFrame({
     required this.title,
     required this.children,
     this.maxWidth = 520,
+    this.showBackButton = false,
+    this.onBack,
   });
 
   final String title;
   final List<Widget> children;
   final double maxWidth;
+  final bool showBackButton;
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -823,6 +898,13 @@ class _ReservationScreenFrame extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (showBackButton) ...[
+                          _TopLeftBackButton(
+                            onPressed:
+                                onBack ?? () => Navigator.of(context).pop(),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         const _GolfLogo(size: 96),
                         const SizedBox(height: 16),
                         Text(
@@ -844,6 +926,500 @@ class _ReservationScreenFrame extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _StartRoundOptionsScreen extends StatefulWidget {
+  const _StartRoundOptionsScreen({
+    required this.datosServidorService,
+    required this.fieldId,
+    required this.idUsuario,
+    required this.loadValidInvitationGameId,
+    required this.generateIdPartida,
+    required this.onInvitationGameCreated,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String fieldId;
+  final String idUsuario;
+  final Future<String?> Function() loadValidInvitationGameId;
+  final String Function() generateIdPartida;
+  final Future<void> Function(String idPartida) onInvitationGameCreated;
+
+  @override
+  State<_StartRoundOptionsScreen> createState() =>
+      _StartRoundOptionsScreenState();
+}
+
+class _StartRoundOptionsScreenState extends State<_StartRoundOptionsScreen> {
+  bool _isOpeningInvite = false;
+  String? _error;
+
+  Future<void> _openInvitePlayers() async {
+    setState(() {
+      _isOpeningInvite = true;
+      _error = null;
+    });
+
+    try {
+      final invitationGameId = await widget.loadValidInvitationGameId();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isOpeningInvite = false;
+      });
+
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => _InvitePlayersScreen(
+            datosServidorService: widget.datosServidorService,
+            fieldId: widget.fieldId,
+            idUsuario: widget.idUsuario,
+            initialIdPartida: invitationGameId,
+            generateIdPartida: widget.generateIdPartida,
+            onInvitationGameCreated: widget.onInvitationGameCreated,
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isOpeningInvite = false;
+        _error = 'No se pudo preparar la invitacion de jugadores.';
+      });
+    }
+  }
+
+  void _openInvitationScanner() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => const _ReceiveInvitationScreen(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Iniciar Salida',
+      showBackButton: true,
+      children: [
+        if (_error != null) ...[
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+          const SizedBox(height: 16),
+        ],
+        FilledButton.icon(
+          onPressed: _isOpeningInvite ? null : _openInvitePlayers,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF567B37),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: _isOpeningInvite
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.group_add),
+          label: Text(
+            _isOpeningInvite ? 'Preparando...' : 'Invitar a jugadores',
+          ),
+        ),
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          onPressed: _isOpeningInvite ? null : _openInvitationScanner,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF567B37),
+            side: const BorderSide(color: Color(0xFF567B37)),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: const Icon(Icons.qr_code_scanner),
+          label: const Text('Recibir la invitacion'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReceiveInvitationScreen extends StatefulWidget {
+  const _ReceiveInvitationScreen();
+
+  @override
+  State<_ReceiveInvitationScreen> createState() =>
+      _ReceiveInvitationScreenState();
+}
+
+class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
+  late final MobileScannerController _scannerController;
+  String? _scannedValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _scannerController = MobileScannerController();
+  }
+
+  @override
+  void dispose() {
+    _scannerController.dispose();
+    super.dispose();
+  }
+
+  void _handleDetection(BarcodeCapture capture) {
+    final value = capture.barcodes
+        .map((barcode) => barcode.rawValue?.trim())
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .firstOrNull;
+    if (value == null || value == _scannedValue) {
+      return;
+    }
+
+    setState(() {
+      _scannedValue = value;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Recibir la invitacion',
+      showBackButton: true,
+      children: [
+        const Text(
+          'escanea el QR de la invitacion',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF545B66),
+          ),
+        ),
+        const SizedBox(height: 18),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            height: 340,
+            child: MobileScanner(
+              controller: _scannerController,
+              onDetect: _handleDetection,
+              errorBuilder: (context, error) {
+                return const ColoredBox(
+                  color: Color(0xFF1E2D28),
+                  child: Center(
+                    child: Icon(
+                      Icons.videocam_off,
+                      color: Color(0xFFF6F2EA),
+                      size: 42,
+                    ),
+                  ),
+                );
+              },
+              placeholderBuilder: (context) {
+                return const ColoredBox(
+                  color: Color(0xFF1E2D28),
+                  child: Center(
+                    child: CircularProgressIndicator(color: Color(0xFFF6F2EA)),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        if (_scannedValue != null) ...[
+          const SizedBox(height: 16),
+          SelectableText(
+            _scannedValue!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF545B66)),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _InvitePlayersScreen extends StatefulWidget {
+  const _InvitePlayersScreen({
+    required this.datosServidorService,
+    required this.fieldId,
+    required this.idUsuario,
+    required this.generateIdPartida,
+    required this.onInvitationGameCreated,
+    this.initialIdPartida,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String fieldId;
+  final String idUsuario;
+  final String? initialIdPartida;
+  final String Function() generateIdPartida;
+  final Future<void> Function(String idPartida) onInvitationGameCreated;
+
+  @override
+  State<_InvitePlayersScreen> createState() => _InvitePlayersScreenState();
+}
+
+class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
+  static const _creatorFlag = 'S';
+
+  bool _isLoading = true;
+  bool _isShowingQr = false;
+  String? _idPartida;
+  String? _error;
+  List<_InvitedPlayer> _players = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadPlayersOrCreateGame());
+  }
+
+  Future<void> _loadPlayersOrCreateGame() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      var idPartida = widget.initialIdPartida?.trim().isNotEmpty == true
+          ? widget.initialIdPartida!.trim()
+          : widget.generateIdPartida();
+      var players = await _fetchPlayers(idPartida);
+
+      if (players.isEmpty) {
+        if (widget.initialIdPartida?.trim().isNotEmpty == true) {
+          idPartida = widget.generateIdPartida();
+        }
+
+        await widget.datosServidorService.creaPartida(
+          widget.fieldId,
+          idPartida,
+          '1',
+        );
+        final response = await widget.datosServidorService.anotaJugadorPartida(
+          idCampo: widget.fieldId,
+          idPartida: idPartida,
+          idUsuario: widget.idUsuario,
+          esCreador: _creatorFlag,
+        );
+
+        if (!_backendResponseIsOk(response)) {
+          throw FormatException('Respuesta no valida: $response');
+        }
+
+        await widget.onInvitationGameCreated(idPartida);
+        players = await _fetchPlayers(idPartida);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _idPartida = idPartida;
+        _players = players;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _error = 'No se pudo preparar la invitacion de jugadores.';
+      });
+    }
+  }
+
+  Future<List<_InvitedPlayer>> _fetchPlayers(String idPartida) async {
+    final response = await widget.datosServidorService.obtenerJugadoresPartida(
+      idPartida,
+    );
+    return _invitedPlayersFromResponse(response);
+  }
+
+  Future<void> _refreshPlayers() async {
+    final idPartida = _idPartida;
+    if (idPartida == null || idPartida.isEmpty) {
+      return;
+    }
+
+    try {
+      final players = await _fetchPlayers(idPartida);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _players = players;
+        _error = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = 'No se pudo actualizar la lista de jugadores.';
+      });
+    }
+  }
+
+  void _showQr() {
+    if (_idPartida == null) {
+      return;
+    }
+
+    setState(() {
+      _isShowingQr = true;
+    });
+  }
+
+  void _hideQr() {
+    setState(() {
+      _isShowingQr = false;
+    });
+    unawaited(_refreshPlayers());
+  }
+
+  String get _invitationUrl {
+    final idPartida = _idPartida ?? '';
+    return 'https://autopowersoft.com/obtenerJson/obtenerJson.aspx'
+        '?accion=invitacion_partida&idPartida=$idPartida';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Invitar Jugadores',
+      showBackButton: true,
+      onBack: _isShowingQr ? _hideQr : () => Navigator.of(context).pop(),
+      children: _isShowingQr ? _buildQrChildren() : _buildPlayerListChildren(),
+    );
+  }
+
+  List<Widget> _buildPlayerListChildren() {
+    if (_isLoading) {
+      return const [
+        Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: CircularProgressIndicator(color: Color(0xFF567B37)),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      if (_error != null) ...[
+        Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+        ),
+        const SizedBox(height: 16),
+      ],
+      for (final player in _players) ...[
+        _InvitedPlayerTile(player: player),
+        const SizedBox(height: 10),
+      ],
+      if (_players.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            'Sin jugadores',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, color: Color(0xFF6C737D)),
+          ),
+        ),
+      const SizedBox(height: 14),
+      FilledButton.icon(
+        onPressed: _idPartida == null ? null : _showQr,
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF567B37),
+          padding: const EdgeInsets.symmetric(vertical: 18),
+        ),
+        icon: const Icon(Icons.person_add_alt_1),
+        label: const Text('añadir jugador'),
+      ),
+    ];
+  }
+
+  List<Widget> _buildQrChildren() {
+    return [
+      Center(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: QrImageView(
+              data: _invitationUrl,
+              version: QrVersions.auto,
+              size: 240,
+              backgroundColor: Colors.white,
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+      SelectableText(
+        _invitationUrl,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 12, color: Color(0xFF545B66)),
+      ),
+    ];
+  }
+}
+
+class _InvitedPlayerTile extends StatelessWidget {
+  const _InvitedPlayerTile({required this.player});
+
+  final _InvitedPlayer player;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1ECE1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD8D2C7)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person, color: Color(0xFF567B37)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              player.displayName,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF545B66),
+              ),
+            ),
+          ),
+          if (!player.isCreator)
+            const Icon(Icons.delete_outline, color: Color(0xFF9D433D)),
+        ],
       ),
     );
   }
@@ -918,6 +1494,7 @@ class _ReservationDayScreenState extends State<_ReservationDayScreen> {
   Widget build(BuildContext context) {
     return _ReservationScreenFrame(
       title: 'Selecciona el día',
+      showBackButton: true,
       children: [
         Row(
           children: [
@@ -949,17 +1526,6 @@ class _ReservationDayScreenState extends State<_ReservationDayScreen> {
           visibleMonth: _visibleMonth,
           today: _today,
           onDaySelected: _selectDay,
-        ),
-        const SizedBox(height: 22),
-        OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).pop(),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF6B432D),
-            side: const BorderSide(color: Color(0xFF6B432D)),
-            padding: const EdgeInsets.symmetric(vertical: 18),
-          ),
-          icon: const Icon(Icons.arrow_back),
-          label: const Text('Volver'),
         ),
       ],
     );
@@ -1391,8 +1957,9 @@ class _ReservationTimeScreenState extends State<_ReservationTimeScreen> {
   @override
   Widget build(BuildContext context) {
     return _ReservationScreenFrame(
-      title: 'Reservar Partida',
+      title: 'Reservar Salida',
       maxWidth: 620,
+      showBackButton: true,
       children: [
         Text(
           _formatDisplayDate(widget.selectedDay),
@@ -1527,17 +2094,6 @@ class _ReservationTimeScreenState extends State<_ReservationTimeScreen> {
             ),
           ),
         ],
-        const SizedBox(height: 14),
-        OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).pop(),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF6B432D),
-            side: const BorderSide(color: Color(0xFF6B432D)),
-            padding: const EdgeInsets.symmetric(vertical: 18),
-          ),
-          icon: const Icon(Icons.arrow_back),
-          label: const Text('Volver'),
-        ),
       ],
     );
   }
@@ -1690,6 +2246,7 @@ class _ReservationSuccessScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return _ReservationScreenFrame(
       title: 'Reserva efectuada',
+      showBackButton: true,
       children: [
         const Icon(Icons.event_available, color: Color(0xFF567B37), size: 56),
         const SizedBox(height: 12),
@@ -2154,6 +2711,12 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (widget.onCancel != null) ...[
+                            _TopLeftBackButton(
+                              onPressed: _isSaving ? null : widget.onCancel,
+                            ),
+                            const SizedBox(height: 10),
+                          ],
                           const _GolfLogo(size: 104),
                           const SizedBox(height: 16),
                           Text(
@@ -2568,6 +3131,11 @@ List<_CreatedGameInfo> _createdGamesFromResponse(String response) {
   return [for (final row in rows) ?_CreatedGameInfo.fromMap(row)];
 }
 
+List<_InvitedPlayer> _invitedPlayersFromResponse(String response) {
+  final rows = _decodeMapRows(response, 0) ?? const [];
+  return [for (final row in rows) ?_InvitedPlayer.fromMap(row)];
+}
+
 List<Map<String, dynamic>>? _decodeAgendaRows(Object? payload, int depth) {
   return _decodeMapRows(payload, depth);
 }
@@ -2593,7 +3161,7 @@ List<Map<String, dynamic>>? _decodeMapRows(Object? payload, int depth) {
 
   if (payload is Map) {
     final map = _stringKeyedMap(payload);
-    for (final key in const ['agenda', 'data', 'valor', 'json']) {
+    for (final key in const ['agenda', 'jugadores', 'data', 'valor', 'json']) {
       if (!map.containsKey(key)) {
         continue;
       }
@@ -3063,6 +3631,43 @@ class _GameSession {
   final String idCampo;
   final String jugadores;
   final String playRowsJson;
+}
+
+class _InvitedPlayer {
+  const _InvitedPlayer({
+    required this.idJugador,
+    required this.alias,
+    required this.esCreador,
+  });
+
+  final String idJugador;
+  final String alias;
+  final String esCreador;
+
+  bool get isCreator => esCreador.toUpperCase() == 'S';
+
+  String get displayName {
+    if (alias.isNotEmpty) {
+      return alias;
+    }
+
+    return idJugador.isEmpty ? 'Jugador' : idJugador;
+  }
+
+  static _InvitedPlayer? fromMap(Map<String, dynamic> map) {
+    final idJugador = '${map['idJugador'] ?? ''}'.trim();
+    final alias = '${map['allias'] ?? map['alias'] ?? ''}'.trim();
+    final esCreador = '${map['es_creador'] ?? ''}'.trim();
+    if (idJugador.isEmpty && alias.isEmpty) {
+      return null;
+    }
+
+    return _InvitedPlayer(
+      idJugador: idJugador,
+      alias: alias,
+      esCreador: esCreador,
+    );
+  }
 }
 
 class _CreatedGameInfo {

@@ -71,7 +71,9 @@ class GolfScorecardScreen extends StatefulWidget {
     required this.idPartida,
     required this.jugadores,
     required this.initialPlayRowsJson,
+    required this.onExit,
     this.differentRemotePlayRowsJson,
+    this.datosServidorService,
     this.onPlayRowsJsonChanged,
   });
 
@@ -97,7 +99,9 @@ class GolfScorecardScreen extends StatefulWidget {
   final String jugadores;
   final String initialPlayRowsJson;
   final String? differentRemotePlayRowsJson;
+  final DatosServidorService? datosServidorService;
   final ValueChanged<String>? onPlayRowsJsonChanged;
+  final VoidCallback onExit;
 
   @override
   State<GolfScorecardScreen> createState() => _GolfScorecardScreenState();
@@ -105,6 +109,7 @@ class GolfScorecardScreen extends StatefulWidget {
 
 class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late final DatosServidorService _datosServidorService;
+  late final bool _ownsDatosServidorService;
   late List<_ScoreRowData> _guideRows;
   late List<List<String>> _playRowValues;
   late List<String> _playRowModifiedValues;
@@ -113,7 +118,9 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   @override
   void initState() {
     super.initState();
-    _datosServidorService = DatosServidorService();
+    _ownsDatosServidorService = widget.datosServidorService == null;
+    _datosServidorService =
+        widget.datosServidorService ?? DatosServidorService();
     _guideRows = _buildGuideRows();
     _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
     _playRowModifiedValues = _decodePlayRowModifiedValues(
@@ -137,7 +144,9 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
   @override
   void dispose() {
-    _datosServidorService.close();
+    if (_ownsDatosServidorService) {
+      _datosServidorService.close();
+    }
     super.dispose();
   }
 
@@ -251,16 +260,46 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: SizedBox(
                           width: cardWidth,
-                          child: _ScorecardCard(
-                            guideRows: _guideRows,
-                            playRowValues: _playRowValues,
-                            idPartida: widget.idPartida,
-                            jugadores: widget.jugadores,
-                            loadError: _loadError,
-                            onPlayValueChanged: _updatePlayValue,
-                            playRowsJsonString: _playRowsJsonString,
-                            differentRemotePlayRowsJson:
-                                widget.differentRemotePlayRowsJson,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: OutlinedButton.icon(
+                                  onPressed: widget.onExit,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFFF6F2EA),
+                                    backgroundColor: const Color.fromRGBO(
+                                      11,
+                                      36,
+                                      26,
+                                      0.32,
+                                    ),
+                                    side: const BorderSide(
+                                      color: Color(0xFFF6F2EA),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 18,
+                                      vertical: 14,
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.arrow_back),
+                                  label: const Text('Salir'),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              _ScorecardCard(
+                                guideRows: _guideRows,
+                                playRowValues: _playRowValues,
+                                idPartida: widget.idPartida,
+                                jugadores: widget.jugadores,
+                                loadError: _loadError,
+                                onPlayValueChanged: _updatePlayValue,
+                                playRowsJsonString: _playRowsJsonString,
+                                differentRemotePlayRowsJson:
+                                    widget.differentRemotePlayRowsJson,
+                              ),
+                            ],
                           ),
                         ),
                       ),

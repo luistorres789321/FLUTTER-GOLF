@@ -52,6 +52,28 @@ class DatosServidorService {
     });
   }
 
+  Future<String> obtenerJugadoresPartida(String idPartida) {
+    return _getTexto({
+      'accion': 'obtener_jugadores_partida',
+      'idPartida': idPartida,
+    });
+  }
+
+  Future<String> anotaJugadorPartida({
+    required String idCampo,
+    required String idPartida,
+    required String idUsuario,
+    required String esCreador,
+  }) {
+    return _getTexto({
+      'accion': 'anota_jugador_partida',
+      'idCampo': idCampo,
+      'idPartida': idPartida,
+      'idUsuario': idUsuario,
+      'es_creador': esCreador,
+    });
+  }
+
   Future<String> yaExisteAlias(String alias) {
     return _getTexto({'accion': 'ya_existe_alias', 'alias': alias});
   }

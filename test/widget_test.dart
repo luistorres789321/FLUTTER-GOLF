@@ -22,7 +22,7 @@ void main() {
     expect(find.text('Alias'), findsOneWidget);
     expect(_logoFinder(), findsOneWidget);
     expect(find.text('Guardar informacion'), findsOneWidget);
-    expect(find.text('Recuperar partida'), findsNothing);
+    expect(find.text('Recuperar Ronda'), findsNothing);
   });
 
   testWidgets('can cancel initial user registration without saving', (
@@ -51,7 +51,7 @@ void main() {
     expect(find.text('Mi Informacion'), findsOneWidget);
 
     final startButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Iniciar nueva partida'),
+      find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
     expect(startButton.onPressed, isNull);
   });
@@ -68,20 +68,130 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recuperar partida'), findsOneWidget);
-    expect(find.text('Iniciar nueva partida'), findsOneWidget);
-    expect(find.text('Partidas Pendientes'), findsOneWidget);
+    expect(find.text('Recuperar Ronda'), findsOneWidget);
+    expect(find.text('Iniciar Salida'), findsOneWidget);
+    expect(find.text('Salidas Pendientes'), findsOneWidget);
     expect(find.text('Mi Informacion'), findsOneWidget);
     expect(_logoFinder(), findsOneWidget);
 
     final startButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Iniciar nueva partida'),
+      find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
     expect(startButton.onPressed, isNotNull);
     final pendingGamesButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Partidas Pendientes'),
+      find.widgetWithText(OutlinedButton, 'Salidas Pendientes'),
     );
     expect(pendingGamesButton.onPressed, isNull);
+  });
+
+  testWidgets('exits recovered scorecard and returns to home', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': 'ABC123XYZ9',
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(datosServidorService: _existingFieldsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Recuperar Ronda'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('Iniciar Salida'), findsNothing);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Salir'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tarjeta de golf'), findsOneWidget);
+    expect(find.text('Iniciar Salida'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsNothing);
+  });
+
+  testWidgets('opens invite players and creates creator when list is empty', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.widgetWithText(FilledButton, 'Invitar a jugadores'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(OutlinedButton, 'Recibir la invitacion'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar a jugadores'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invitar Jugadores'), findsOneWidget);
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.byIcon(Icons.delete_outline), findsNothing);
+    expect(find.text('añadir jugador'), findsOneWidget);
+
+    final createUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'crea_partida',
+    );
+    expect(createUri.queryParameters['jugadores'], '1');
+    final idPartida = createUri.queryParameters['idPartida']!;
+
+    final playerRequests = requests.where(
+      (uri) => uri.queryParameters['accion'] == 'obtener_jugadores_partida',
+    );
+    expect(playerRequests, hasLength(2));
+    expect(
+      playerRequests.map((uri) => uri.queryParameters['idPartida']),
+      everyElement(idPartida),
+    );
+
+    final annotationUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'anota_jugador_partida',
+    );
+    expect(annotationUri.queryParameters['idCampo'], '1');
+    expect(annotationUri.queryParameters['idPartida'], idPartida);
+    expect(annotationUri.queryParameters['idUsuario'], '123');
+    expect(annotationUri.queryParameters['es_creador'], 'S');
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('invitation_game_id'), idPartida);
+    expect(prefs.getInt('invitation_game_created_at'), isNotNull);
+
+    await tester.tap(find.text('añadir jugador'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'https://autopowersoft.com/obtenerJson/obtenerJson.aspx'
+        '?accion=invitacion_partida&idPartida=$idPartida',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Volver'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Volver'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Volver'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('añadir jugador'), findsOneWidget);
   });
 
   testWidgets('loads created games and enables pending games button', (
@@ -109,7 +219,7 @@ void main() {
     expect(createdGamesUri.queryParameters['idUsuario'], '123');
 
     final pendingGamesButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Partidas Pendientes'),
+      find.widgetWithText(OutlinedButton, 'Salidas Pendientes'),
     );
     expect(pendingGamesButton.onPressed, isNotNull);
   });
@@ -130,9 +240,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Reservar Partida'));
+    await tester.ensureVisible(find.text('Reservar Salida'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Reservar Partida'));
+    await tester.tap(find.text('Reservar Salida'));
     await tester.pumpAndSettle();
 
     expect(find.text('Selecciona el día'), findsOneWidget);
@@ -208,6 +318,8 @@ void main() {
     expect(find.text('Hora disponible'), findsOneWidget);
     expect(find.text('Reservar'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Reservar'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Reservar'));
     await tester.pumpAndSettle();
 
@@ -307,10 +419,10 @@ void main() {
     );
 
     final recoverButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Recuperar partida'),
+      find.widgetWithText(FilledButton, 'Recuperar Ronda'),
     );
     final startButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Iniciar nueva partida'),
+      find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
     expect(recoverButton.onPressed, isNull);
     expect(startButton.onPressed, isNull);
@@ -554,6 +666,8 @@ DatosServidorService _existingFieldsService({
   List<Uri>? requests,
   String createdGamesResponse = '[]',
 }) {
+  final annotatedInvitationGames = <String>{};
+
   return DatosServidorService(
     client: MockClient((request) async {
       requests?.add(request.url);
@@ -568,6 +682,39 @@ DatosServidorService _existingFieldsService({
         );
       }
 
+      if (accion == 'crea_partida') {
+        return http.Response(jsonEncode({'rpta': 'ok'}), 200);
+      }
+
+      if (accion == 'obtener_json_hoyos') {
+        return http.Response(jsonEncode({'rpta': 'ok'}), 200);
+      }
+
+      if (accion == 'anota_json_hoyos') {
+        return http.Response(jsonEncode({'rpta': 'ok'}), 200);
+      }
+
+      if (accion == 'obtener_jugadores_partida') {
+        final idPartida = request.url.queryParameters['idPartida'];
+        if (idPartida != null && annotatedInvitationGames.contains(idPartida)) {
+          return http.Response(
+            "[{'idJugador':'123','allias':'Auto','es_creador':'S'}]",
+            200,
+          );
+        }
+
+        return http.Response('[]', 200);
+      }
+
+      if (accion == 'anota_jugador_partida') {
+        final idPartida = request.url.queryParameters['idPartida'];
+        if (idPartida != null) {
+          annotatedInvitationGames.add(idPartida);
+        }
+
+        return http.Response("{'rpta':'ok'}", 200);
+      }
+
       if (accion == 'obtener_agenda') {
         return http.Response(
           "[{'desde':'1025','hasta':'1040','idPartida':'11223'}]",
@@ -578,6 +725,7 @@ DatosServidorService _existingFieldsService({
       if (accion == 'coje_configuracion_campos') {
         final parametro = request.url.queryParameters['parametro'];
         final value = switch (parametro) {
+          'configuracion_tarjeta' => jsonEncode({'rpta': 'ok', 'valor': '[]'}),
           'lapsus_agenda' => '15',
           'agenda_desde' => '10:00',
           'agenda_hasta' => '11:00',
