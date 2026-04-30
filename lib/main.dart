@@ -593,7 +593,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                               const SizedBox(height: 12),
                               Text(
                                 hasRecoverableGame
-                                    ? 'Jugador: $playerAlias\nPartida guardada: $recoverableGameId\nCampo: $_savedFieldId · Jugadores: $_savedPlayers'
+                                    ? 'Jugador: $playerAlias\nidPartida: $recoverableGameId'
                                     : 'Jugador: $playerAlias\n ',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
@@ -1200,11 +1200,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     unawaited(_refreshPlayers());
   }
 
-  String get _invitationUrl {
-    final idPartida = _idPartida ?? '';
-    return 'https://autopowersoft.com/obtenerJson/obtenerJson.aspx'
-        '?accion=invitacion_partida&idPartida=$idPartida';
-  }
+  String get _invitationQrData => _idPartida?.trim() ?? '';
 
   @override
   Widget build(BuildContext context) {
@@ -1285,7 +1281,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: QrImageView(
-              data: _invitationUrl,
+              data: _invitationQrData,
               version: QrVersions.auto,
               size: 240,
               backgroundColor: Colors.white,
@@ -1295,7 +1291,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       ),
       const SizedBox(height: 16),
       SelectableText(
-        _invitationUrl,
+        _invitationQrData,
         textAlign: TextAlign.center,
         style: const TextStyle(fontSize: 12, color: Color(0xFF545B66)),
       ),
