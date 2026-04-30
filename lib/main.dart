@@ -1324,6 +1324,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
   int _playersRefreshGeneration = 0;
   bool _isLoading = true;
   bool _isShowingQr = false;
+  final Set<String> _deletingPlayerIds = <String>{};
   String? _idPartida;
   String? _error;
   List<_InvitedPlayer> _players = const [];
@@ -1510,6 +1511,121 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     _refreshPlayersAndContinuePolling();
   }
 
+  bool _isCurrentUser(_InvitedPlayer player) {
+    return player.idJugador.trim() == widget.idUsuario.trim();
+  }
+
+  Future<void> _confirmAndRemovePlayer(_InvitedPlayer player) async {
+    final idUsuario = player.idJugador.trim();
+    if (idUsuario.isEmpty) {
+      return;
+    }
+
+    final isCurrentUser = _isCurrentUser(player);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          content: Text(
+            isCurrentUser
+                ? 'te vas a salir de la Partida, seguro ?'
+                : 'Vas a eliminar a ${player.displayName}, seguro ?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('No'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Si'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    await _removePlayer(player);
+  }
+
+  Future<void> _removePlayer(_InvitedPlayer player) async {
+    final idPartida = _idPartida?.trim() ?? '';
+    final idUsuario = player.idJugador.trim();
+    if (idPartida.isEmpty || idUsuario.isEmpty) {
+      return;
+    }
+
+    final isCurrentUser = _isCurrentUser(player);
+    _stopPlayersRefreshPolling();
+    setState(() {
+      _deletingPlayerIds.add(idUsuario);
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.quitaJugadorPartida(
+        idPartida: idPartida,
+        idUsuario: idUsuario,
+      );
+      debugPrint(
+        'quitaJugadorPartida(idPartida: $idPartida, idUsuario: $idUsuario): '
+        '$response',
+      );
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (isCurrentUser) {
+        await _resetCurrentUserInvitationGame();
+      } else {
+        await _refreshPlayers();
+      }
+    } catch (error) {
+      debugPrint('quitaJugadorPartida fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = 'No se pudo eliminar el jugador.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deletingPlayerIds.remove(idUsuario);
+        });
+        _startPlayersRefreshPolling();
+      }
+    }
+  }
+
+  Future<void> _resetCurrentUserInvitationGame() async {
+    final newIdPartida = widget.generateIdPartida();
+    final createResponse = await widget.datosServidorService.creaPartida(
+      widget.fieldId,
+      newIdPartida,
+      '1',
+    );
+    debugPrint('creaPartida($newIdPartida) tras salir: $createResponse');
+    await widget.onInvitationGameCreated(newIdPartida);
+    await widget.onInvitationAccepted(newIdPartida);
+
+    final players = await _fetchPlayers(newIdPartida);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _idPartida = newIdPartida;
+      _players = players;
+      _error = null;
+    });
+  }
+
   String get _invitationQrData {
     final idPartida = _idPartida?.trim() ?? '';
     if (idPartida.isEmpty) {
@@ -1551,7 +1667,13 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         const SizedBox(height: 16),
       ],
       for (final player in _players) ...[
-        _InvitedPlayerTile(player: player),
+        _InvitedPlayerTile(
+          player: player,
+          isDeleting: _deletingPlayerIds.contains(player.idJugador.trim()),
+          onDelete: player.idJugador.trim().isEmpty
+              ? null
+              : () => unawaited(_confirmAndRemovePlayer(player)),
+        ),
         const SizedBox(height: 10),
       ],
       if (_players.isEmpty)
@@ -1617,9 +1739,15 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
 }
 
 class _InvitedPlayerTile extends StatelessWidget {
-  const _InvitedPlayerTile({required this.player});
+  const _InvitedPlayerTile({
+    required this.player,
+    required this.isDeleting,
+    required this.onDelete,
+  });
 
   final _InvitedPlayer player;
+  final bool isDeleting;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1644,8 +1772,26 @@ class _InvitedPlayerTile extends StatelessWidget {
               ),
             ),
           ),
-          if (!player.isCreator)
-            const Icon(Icons.delete_outline, color: Color(0xFF9D433D)),
+          SizedBox(
+            width: 42,
+            height: 42,
+            child: isDeleting
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF9D433D),
+                    ),
+                  )
+                : IconButton(
+                    onPressed: onDelete,
+                    tooltip: 'Eliminar',
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Color(0xFF9D433D),
+                    ),
+                  ),
+          ),
         ],
       ),
     );

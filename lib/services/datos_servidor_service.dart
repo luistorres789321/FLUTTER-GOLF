@@ -76,6 +76,17 @@ class DatosServidorService {
     });
   }
 
+  Future<String> quitaJugadorPartida({
+    required String idPartida,
+    required String idUsuario,
+  }) {
+    return _getTexto({
+      'accion': 'quita_jugador_partida',
+      'idPartida': idPartida,
+      'idUsuario': idUsuario,
+    });
+  }
+
   Future<String> anotaJugadorPartida({
     required String idCampo,
     required String idPartida,

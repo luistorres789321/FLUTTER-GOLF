@@ -150,6 +150,29 @@ void main() {
       });
     });
 
+    test('construye la query de quitaJugadorPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.quitaJugadorPartida(
+        idPartida: 'ABC123XYZ9',
+        idUsuario: 'Z12345',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'quita_jugador_partida',
+        'idPartida': 'ABC123XYZ9',
+        'idUsuario': 'Z12345',
+      });
+    });
+
     test('construye la query de anotaJugadorPartida', () async {
       late Uri requestedUri;
 
