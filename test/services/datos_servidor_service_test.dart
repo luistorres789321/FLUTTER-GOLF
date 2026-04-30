@@ -121,6 +121,33 @@ void main() {
       });
     });
 
+    test('construye la query de aceptaInvitacion', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.aceptaInvitacion(
+        idPartidaAnfitrion: 'ANFITRION1',
+        idPartidaInvitado: 'INVITADO2',
+        idUsuarioAnfitrion: 'USUARIO1',
+        idUsuarioInvitado: 'USUARIO2',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'acepta_invitacion',
+        'idPartida_anfirtrion': 'ANFITRION1',
+        'idPartida_inivitado': 'INVITADO2',
+        'idUsuario_anfitrion': 'USUARIO1',
+        'idUsuario_invitado': 'USUARIO2',
+      });
+    });
+
     test('construye la query de anotaJugadorPartida', () async {
       late Uri requestedUri;
 

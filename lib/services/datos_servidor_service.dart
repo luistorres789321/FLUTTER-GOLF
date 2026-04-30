@@ -59,6 +59,21 @@ class DatosServidorService {
     });
   }
 
+  Future<String> aceptaInvitacion({
+    required String idPartidaAnfitrion,
+    required String idPartidaInvitado,
+    required String idUsuarioAnfitrion,
+    required String idUsuarioInvitado,
+  }) {
+    return _getTexto({
+      'accion': 'acepta_invitacion',
+      'idPartida_anfirtrion': idPartidaAnfitrion,
+      'idPartida_inivitado': idPartidaInvitado,
+      'idUsuario_anfitrion': idUsuarioAnfitrion,
+      'idUsuario_invitado': idUsuarioInvitado,
+    });
+  }
+
   Future<String> anotaJugadorPartida({
     required String idCampo,
     required String idPartida,

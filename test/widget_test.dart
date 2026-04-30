@@ -172,13 +172,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Invitar a jugadores'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text(
-        'https://autopowersoft.com/obtenerJson/obtenerJson.aspx'
-        '?accion=invitacion_partida&idPartida=$idPartida',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('$idPartida,123'), findsOneWidget);
     expect(find.text('Volver'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Volver'));

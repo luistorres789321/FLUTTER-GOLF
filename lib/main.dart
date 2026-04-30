@@ -269,9 +269,33 @@ class _GolfAppHomeState extends State<GolfAppHome> {
           loadValidInvitationGameId: _loadValidInvitationGameId,
           generateIdPartida: _generateGameId,
           onInvitationGameCreated: _storeInvitationGameId,
+          onInvitationAccepted: _saveAcceptedInvitationGameId,
         ),
       ),
     );
+  }
+
+  Future<void> _saveAcceptedInvitationGameId(String idPartida) async {
+    final acceptedIdPartida = idPartida.trim();
+    if (acceptedIdPartida.isEmpty) {
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_savedGameIdKey, acceptedIdPartida);
+    await prefs.setString(_invitationGameIdKey, acceptedIdPartida);
+    await prefs.setInt(
+      _invitationGameCreatedAtKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _savedGameId = acceptedIdPartida;
+    });
   }
 
   void _recoverGame() {
@@ -893,7 +917,17 @@ class _ReservationScreenFrame extends StatelessWidget {
 }
 
 class _ReceiveInvitationScreen extends StatefulWidget {
-  const _ReceiveInvitationScreen();
+  const _ReceiveInvitationScreen({
+    required this.datosServidorService,
+    required this.idPartidaInvitado,
+    required this.idUsuarioInvitado,
+    required this.onInvitationAccepted,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String idPartidaInvitado;
+  final String idUsuarioInvitado;
+  final Future<void> Function(String idPartida) onInvitationAccepted;
 
   @override
   State<_ReceiveInvitationScreen> createState() =>
@@ -903,6 +937,8 @@ class _ReceiveInvitationScreen extends StatefulWidget {
 class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
   late final MobileScannerController _scannerController;
   String? _scannedValue;
+  String? _error;
+  bool _isAcceptingInvitation = false;
   bool _isInvitationConfirmed = false;
 
   @override
@@ -926,19 +962,75 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
         .whereType<String>()
         .where((value) => value.isNotEmpty)
         .firstOrNull;
-    if (value == null || _isInvitationConfirmed) {
+    if (value == null || _isAcceptingInvitation || _isInvitationConfirmed) {
       return;
     }
 
     setState(() {
       _scannedValue = value;
-      _isInvitationConfirmed = true;
+      _error = null;
+      _isAcceptingInvitation = true;
     });
 
     unawaited(_scannerController.stop());
-    unawaited(SystemSound.play(SystemSoundType.click));
-    unawaited(HapticFeedback.mediumImpact());
-    unawaited(_returnToPlayersAfterConfirmation());
+    unawaited(_acceptInvitation(value));
+  }
+
+  Future<void> _acceptInvitation(String scannedInvitation) async {
+    final invitationData = _invitationDataFromQr(scannedInvitation);
+    if (invitationData == null) {
+      setState(() {
+        _scannedValue = null;
+        _isAcceptingInvitation = false;
+        _error = 'No se pudo aceptar la invitacion.';
+      });
+      unawaited(_scannerController.start());
+      return;
+    }
+
+    try {
+      final response = await widget.datosServidorService.aceptaInvitacion(
+        idPartidaAnfitrion: invitationData.idPartidaAnfitrion,
+        idPartidaInvitado: widget.idPartidaInvitado,
+        idUsuarioAnfitrion: invitationData.idUsuarioAnfitrion,
+        idUsuarioInvitado: widget.idUsuarioInvitado,
+      );
+
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      await widget.onInvitationAccepted(invitationData.idPartidaAnfitrion);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _scannedValue = invitationData.idPartidaAnfitrion;
+        _isAcceptingInvitation = false;
+        _isInvitationConfirmed = true;
+      });
+
+      unawaited(SystemSound.play(SystemSoundType.click));
+      unawaited(HapticFeedback.mediumImpact());
+      unawaited(_returnToPlayersAfterConfirmation());
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _scannedValue = null;
+        _isAcceptingInvitation = false;
+        _error = 'No se pudo aceptar la invitacion.';
+      });
+      unawaited(_scannerController.start());
+    }
   }
 
   Future<void> _returnToPlayersAfterConfirmation() async {
@@ -968,6 +1060,18 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
               ),
             ),
             const SizedBox(height: 18),
+            if (_error != null) ...[
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF9D433D),
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: SizedBox(
@@ -1002,6 +1106,51 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
             ),
           ],
         ),
+        if (_isAcceptingInvitation)
+          Positioned.fill(
+            child: AbsorbPointer(
+              child: ColoredBox(
+                color: const Color.fromRGBO(3, 17, 12, 0.78),
+                child: Center(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF6F2EA),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color.fromRGBO(0, 0, 0, 0.28),
+                          blurRadius: 30,
+                          offset: Offset(0, 16),
+                        ),
+                      ],
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 42,
+                        vertical: 34,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(color: Color(0xFF567B37)),
+                          SizedBox(height: 18),
+                          Text(
+                            'Aceptando invitacion',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF567B37),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (_isInvitationConfirmed)
           Positioned.fill(
             child: AbsorbPointer(
@@ -1056,6 +1205,28 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
   }
 }
 
+class _InvitationQrData {
+  const _InvitationQrData({
+    required this.idPartidaAnfitrion,
+    required this.idUsuarioAnfitrion,
+  });
+
+  final String idPartidaAnfitrion;
+  final String idUsuarioAnfitrion;
+}
+
+_InvitationQrData? _invitationDataFromQr(String qrData) {
+  final parts = qrData.split(',').map((part) => part.trim()).toList();
+  if (parts.length < 2 || parts[0].isEmpty || parts[1].isEmpty) {
+    return null;
+  }
+
+  return _InvitationQrData(
+    idPartidaAnfitrion: parts[0],
+    idUsuarioAnfitrion: parts[1],
+  );
+}
+
 class _InvitePlayersScreen extends StatefulWidget {
   const _InvitePlayersScreen({
     required this.datosServidorService,
@@ -1064,6 +1235,7 @@ class _InvitePlayersScreen extends StatefulWidget {
     required this.loadValidInvitationGameId,
     required this.generateIdPartida,
     required this.onInvitationGameCreated,
+    required this.onInvitationAccepted,
   });
 
   final DatosServidorService datosServidorService;
@@ -1072,6 +1244,7 @@ class _InvitePlayersScreen extends StatefulWidget {
   final Future<String?> Function() loadValidInvitationGameId;
   final String Function() generateIdPartida;
   final Future<void> Function(String idPartida) onInvitationGameCreated;
+  final Future<void> Function(String idPartida) onInvitationAccepted;
 
   @override
   State<_InvitePlayersScreen> createState() => _InvitePlayersScreenState();
@@ -1188,19 +1361,48 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
   }
 
   Future<void> _openInvitationScanner() async {
-    await Navigator.of(context).push<String?>(
+    final idPartida = _idPartida;
+    if (idPartida == null || idPartida.isEmpty) {
+      return;
+    }
+
+    final acceptedIdPartida = await Navigator.of(context).push<String?>(
       MaterialPageRoute<String?>(
-        builder: (context) => const _ReceiveInvitationScreen(),
+        builder: (context) => _ReceiveInvitationScreen(
+          datosServidorService: widget.datosServidorService,
+          idPartidaInvitado: idPartida,
+          idUsuarioInvitado: widget.idUsuario,
+          onInvitationAccepted: widget.onInvitationAccepted,
+        ),
       ),
     );
     if (!mounted) {
       return;
     }
 
+    final hostIdPartida = acceptedIdPartida?.trim();
+    if (hostIdPartida == null || hostIdPartida.isEmpty) {
+      unawaited(_refreshPlayers());
+      return;
+    }
+
+    setState(() {
+      _idPartida = hostIdPartida;
+      _players = const [];
+      _error = null;
+    });
+
     unawaited(_refreshPlayers());
   }
 
-  String get _invitationQrData => _idPartida?.trim() ?? '';
+  String get _invitationQrData {
+    final idPartida = _idPartida?.trim() ?? '';
+    if (idPartida.isEmpty) {
+      return '';
+    }
+
+    return '$idPartida,${widget.idUsuario.trim()}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1258,7 +1460,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       ),
       const SizedBox(height: 14),
       OutlinedButton.icon(
-        onPressed: _openInvitationScanner,
+        onPressed: _idPartida == null ? null : _openInvitationScanner,
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xFF567B37),
           side: const BorderSide(color: Color(0xFF567B37)),
