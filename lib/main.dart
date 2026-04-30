@@ -938,6 +938,7 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
   late final MobileScannerController _scannerController;
   String? _scannedValue;
   String? _error;
+  String? _errorDetails;
   bool _isAcceptingInvitation = false;
   bool _isInvitationConfirmed = false;
 
@@ -969,6 +970,7 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
     setState(() {
       _scannedValue = value;
       _error = null;
+      _errorDetails = null;
       _isAcceptingInvitation = true;
     });
 
@@ -979,25 +981,60 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
   Future<void> _acceptInvitation(String scannedInvitation) async {
     final invitationData = _invitationDataFromQr(scannedInvitation);
     if (invitationData == null) {
-      setState(() {
-        _scannedValue = null;
-        _isAcceptingInvitation = false;
-        _error = 'No se pudo aceptar la invitacion.';
-      });
-      unawaited(_scannerController.start());
+      debugPrint('QR invitacion no valido: $scannedInvitation');
+      _showAcceptInvitationError(
+        'QR leido: "$scannedInvitation". Formato esperado: idPartida,idUsuario',
+      );
       return;
     }
 
+    final requestDetails =
+        'idPartida_anfitrion=${invitationData.idPartidaAnfitrion}\n'
+        'idPartida_invitado=${widget.idPartidaInvitado}\n'
+        'idUsuario_anfitrion=${invitationData.idUsuarioAnfitrion}\n'
+        'idUsuario_invitado=${widget.idUsuarioInvitado}';
+
     try {
+      debugPrint(
+        'aceptaInvitacion request: '
+        'idPartida_anfitrion=${invitationData.idPartidaAnfitrion}, '
+        'idPartida_invitado=${widget.idPartidaInvitado}, '
+        'idUsuario_anfitrion=${invitationData.idUsuarioAnfitrion}, '
+        'idUsuario_invitado=${widget.idUsuarioInvitado}',
+      );
       final response = await widget.datosServidorService.aceptaInvitacion(
         idPartidaAnfitrion: invitationData.idPartidaAnfitrion,
         idPartidaInvitado: widget.idPartidaInvitado,
         idUsuarioAnfitrion: invitationData.idUsuarioAnfitrion,
         idUsuarioInvitado: widget.idUsuarioInvitado,
       );
+      debugPrint('aceptaInvitacion response: $response');
 
       if (!_backendResponseIsOk(response)) {
-        throw FormatException('Respuesta no valida: $response');
+        debugPrint('aceptaInvitacion respuesta no ok: $response');
+        _showAcceptInvitationError('$requestDetails\nBackend: $response');
+        return;
+      }
+
+      final playersResponse = await widget.datosServidorService
+          .obtenerJugadoresPartida(invitationData.idPartidaAnfitrion);
+      debugPrint(
+        'obtenerJugadoresPartida(${invitationData.idPartidaAnfitrion}) '
+        'tras aceptar: $playersResponse',
+      );
+      final players = _invitedPlayersFromResponse(playersResponse);
+      final invitedUserId = widget.idUsuarioInvitado.trim();
+      final isInvitedUserRegistered = players.any(
+        (player) => player.idJugador.trim() == invitedUserId,
+      );
+      if (!isInvitedUserRegistered) {
+        _showAcceptInvitationError(
+          '$requestDetails\n'
+          'acepta_invitacion: $response\n'
+          'obtenerJugadoresPartida(${invitationData.idPartidaAnfitrion}): '
+          '$playersResponse',
+        );
+        return;
       }
 
       if (!mounted) {
@@ -1012,6 +1049,7 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
 
       setState(() {
         _scannedValue = invitationData.idPartidaAnfitrion;
+        _errorDetails = null;
         _isAcceptingInvitation = false;
         _isInvitationConfirmed = true;
       });
@@ -1019,18 +1057,35 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
       unawaited(SystemSound.play(SystemSoundType.click));
       unawaited(HapticFeedback.mediumImpact());
       unawaited(_returnToPlayersAfterConfirmation());
-    } catch (_) {
+    } catch (error) {
+      debugPrint('aceptaInvitacion error: $error');
       if (!mounted) {
         return;
       }
 
-      setState(() {
-        _scannedValue = null;
-        _isAcceptingInvitation = false;
-        _error = 'No se pudo aceptar la invitacion.';
-      });
-      unawaited(_scannerController.start());
+      final details = switch (error) {
+        DatosServidorException() => 'HTTP ${error.statusCode}: ${error.body}',
+        _ => '$error',
+      };
+      _showAcceptInvitationError('$requestDetails\n$details');
     }
+  }
+
+  void _showAcceptInvitationError(
+    String details, {
+    String message = 'No se pudo aceptar la invitacion.',
+  }) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _scannedValue = null;
+      _isAcceptingInvitation = false;
+      _error = message;
+      _errorDetails = details;
+    });
+    unawaited(_scannerController.start());
   }
 
   Future<void> _returnToPlayersAfterConfirmation() async {
@@ -1070,6 +1125,18 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
                   color: Color(0xFF9D433D),
                 ),
               ),
+              if (_errorDetails != null) ...[
+                const SizedBox(height: 8),
+                SelectableText(
+                  _errorDetails!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF9D433D),
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
             ],
             ClipRRect(
@@ -1251,6 +1318,10 @@ class _InvitePlayersScreen extends StatefulWidget {
 }
 
 class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
+  static const _playersRefreshDelay = Duration(seconds: 5);
+
+  Timer? _playersRefreshTimer;
+  int _playersRefreshGeneration = 0;
   bool _isLoading = true;
   bool _isShowingQr = false;
   String? _idPartida;
@@ -1261,6 +1332,12 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
   void initState() {
     super.initState();
     unawaited(_loadPlayersOrCreateGame());
+  }
+
+  @override
+  void dispose() {
+    _stopPlayersRefreshPolling();
+    super.dispose();
   }
 
   Future<void> _loadPlayersOrCreateGame() async {
@@ -1297,6 +1374,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         _players = players;
         _isLoading = false;
       });
+      _startPlayersRefreshPolling();
     } catch (error) {
       if (!mounted) {
         return;
@@ -1313,10 +1391,41 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     final response = await widget.datosServidorService.obtenerJugadoresPartida(
       idPartida,
     );
+    debugPrint('obtenerJugadoresPartida($idPartida): $response');
     return _invitedPlayersFromResponse(response);
   }
 
-  Future<void> _refreshPlayers() async {
+  void _startPlayersRefreshPolling() {
+    final generation = ++_playersRefreshGeneration;
+    _scheduleNextPlayersRefresh(generation);
+  }
+
+  void _stopPlayersRefreshPolling() {
+    _playersRefreshGeneration++;
+    _playersRefreshTimer?.cancel();
+    _playersRefreshTimer = null;
+  }
+
+  void _scheduleNextPlayersRefresh(int generation) {
+    _playersRefreshTimer?.cancel();
+    if (!mounted ||
+        generation != _playersRefreshGeneration ||
+        (_idPartida?.trim().isEmpty ?? true)) {
+      return;
+    }
+
+    _playersRefreshTimer = Timer(_playersRefreshDelay, () {
+      unawaited(_refreshPlayers(pollingGeneration: generation));
+    });
+  }
+
+  void _refreshPlayersAndContinuePolling() {
+    final generation = ++_playersRefreshGeneration;
+    _playersRefreshTimer?.cancel();
+    unawaited(_refreshPlayers(pollingGeneration: generation));
+  }
+
+  Future<void> _refreshPlayers({int? pollingGeneration}) async {
     final idPartida = _idPartida;
     if (idPartida == null || idPartida.isEmpty) {
       return;
@@ -1340,6 +1449,12 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       setState(() {
         _error = 'No se pudo actualizar la lista de jugadores.';
       });
+    } finally {
+      if (pollingGeneration != null &&
+          mounted &&
+          pollingGeneration == _playersRefreshGeneration) {
+        _scheduleNextPlayersRefresh(pollingGeneration);
+      }
     }
   }
 
@@ -1357,7 +1472,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     setState(() {
       _isShowingQr = false;
     });
-    unawaited(_refreshPlayers());
+    _refreshPlayersAndContinuePolling();
   }
 
   Future<void> _openInvitationScanner() async {
@@ -1382,7 +1497,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
 
     final hostIdPartida = acceptedIdPartida?.trim();
     if (hostIdPartida == null || hostIdPartida.isEmpty) {
-      unawaited(_refreshPlayers());
+      _refreshPlayersAndContinuePolling();
       return;
     }
 
@@ -1392,7 +1507,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       _error = null;
     });
 
-    unawaited(_refreshPlayers());
+    _refreshPlayersAndContinuePolling();
   }
 
   String get _invitationQrData {
@@ -3767,7 +3882,7 @@ class _InvitedPlayer {
   }
 
   static _InvitedPlayer? fromMap(Map<String, dynamic> map) {
-    final idJugador = '${map['idJugador'] ?? ''}'.trim();
+    final idJugador = '${map['idJugador'] ?? map['idUsuario'] ?? ''}'.trim();
     final alias = '${map['allias'] ?? map['alias'] ?? ''}'.trim();
     final esCreador = '${map['es_creador'] ?? ''}'.trim();
     if (idJugador.isEmpty && alias.isEmpty) {

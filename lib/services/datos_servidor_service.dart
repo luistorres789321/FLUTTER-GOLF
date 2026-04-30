@@ -67,6 +67,8 @@ class DatosServidorService {
   }) {
     return _getTexto({
       'accion': 'acepta_invitacion',
+      'idPartida_anfitrion': idPartidaAnfitrion,
+      'idPartida_invitado': idPartidaInvitado,
       'idPartida_anfirtrion': idPartidaAnfitrion,
       'idPartida_inivitado': idPartidaInvitado,
       'idUsuario_anfitrion': idUsuarioAnfitrion,

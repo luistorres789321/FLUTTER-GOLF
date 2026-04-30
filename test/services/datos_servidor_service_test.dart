@@ -141,6 +141,8 @@ void main() {
       expect(result, "{'rpta':'ok'}");
       expect(requestedUri.queryParameters, {
         'accion': 'acepta_invitacion',
+        'idPartida_anfitrion': 'ANFITRION1',
+        'idPartida_invitado': 'INVITADO2',
         'idPartida_anfirtrion': 'ANFITRION1',
         'idPartida_inivitado': 'INVITADO2',
         'idUsuario_anfitrion': 'USUARIO1',
