@@ -11,7 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'golf_scorecard_screen.dart';
 import 'services/datos_servidor_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const GolfScorecardApp());
 }
 
@@ -79,7 +81,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   String? _creationError;
   String? _userRegistrationError;
   _GameSession? _activeSession;
-  List<_CreatedGameInfo> _createdGames = const [];
   _UserInformation? _userInformation;
   bool _isUserRegistered = false;
   bool _isEditingUserInformation = false;
@@ -209,10 +210,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
 
     if (isRegistered && savedInformation.idUsuario.isNotEmpty) {
       unawaited(_loadCreatedGames(savedInformation.idUsuario));
-    } else {
-      setState(() {
-        _createdGames = const [];
-      });
     }
   }
 
@@ -221,23 +218,9 @@ class _GolfAppHomeState extends State<GolfAppHome> {
       final response = await _datosServidorService.obtenerPartidasCreadas(
         idUsuario,
       );
-      final createdGames = _createdGamesFromResponse(response);
-      if (!mounted || _userInformation?.idUsuario != idUsuario) {
-        return;
-      }
-
-      setState(() {
-        _createdGames = createdGames;
-      });
+      _createdGamesFromResponse(response);
     } catch (error) {
       debugPrint('obtener partidas creadas fallo: $error');
-      if (!mounted || _userInformation?.idUsuario != idUsuario) {
-        return;
-      }
-
-      setState(() {
-        _createdGames = const [];
-      });
     }
   }
 
@@ -548,6 +531,11 @@ class _GolfAppHomeState extends State<GolfAppHome> {
 
     final playerAlias = userInformation?.alias ?? 'Sin registrar';
     final canUseGameActions = userInformation != null && _isUserRegistered;
+    final recoverableGameId = _savedGameId?.trim();
+    final hasRecoverableGame =
+        canUseGameActions &&
+        recoverableGameId != null &&
+        recoverableGameId.isNotEmpty;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B241A),
@@ -604,9 +592,9 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                _savedGameId == null
-                                    ? 'Jugador: $playerAlias\n '
-                                    : 'Jugador: $playerAlias\nPartida guardada: $_savedGameId\nCampo: $_savedFieldId · Jugadores: $_savedPlayers',
+                                hasRecoverableGame
+                                    ? 'Jugador: $playerAlias\nPartida guardada: $recoverableGameId\nCampo: $_savedFieldId · Jugadores: $_savedPlayers'
+                                    : 'Jugador: $playerAlias\n ',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
                                   fontSize: 14,
@@ -636,24 +624,23 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                 ),
                               ],
                               const SizedBox(height: 28),
-                              FilledButton.icon(
-                                onPressed:
-                                    _savedGameId == null || !canUseGameActions
-                                    ? null
-                                    : _recoverGame,
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF567B37),
-                                  disabledBackgroundColor: const Color(
-                                    0xFFBBC5B0,
+                              if (hasRecoverableGame) ...[
+                                FilledButton.icon(
+                                  onPressed: _recoverGame,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFF567B37),
+                                    disabledBackgroundColor: const Color(
+                                      0xFFBBC5B0,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 18,
+                                    ),
                                   ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 18,
-                                  ),
+                                  icon: const Icon(Icons.restore),
+                                  label: const Text('Recuperar Ronda'),
                                 ),
-                                icon: const Icon(Icons.restore),
-                                label: const Text('Recuperar Ronda'),
-                              ),
-                              const SizedBox(height: 14),
+                                const SizedBox(height: 14),
+                              ],
                               OutlinedButton.icon(
                                 onPressed: canUseGameActions
                                     ? _openStartRoundOptions
@@ -686,32 +673,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                 ),
                                 icon: const Icon(Icons.event_available),
                                 label: const Text('Reservar Salida'),
-                              ),
-                              const SizedBox(height: 14),
-                              OutlinedButton.icon(
-                                onPressed:
-                                    canUseGameActions &&
-                                        _createdGames.isNotEmpty
-                                    ? () {}
-                                    : null,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFF567B37),
-                                  disabledForegroundColor: const Color(
-                                    0xFF9AA092,
-                                  ),
-                                  side: BorderSide(
-                                    color:
-                                        canUseGameActions &&
-                                            _createdGames.isNotEmpty
-                                        ? const Color(0xFF567B37)
-                                        : const Color(0xFFD8D2C7),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 18,
-                                  ),
-                                ),
-                                icon: const Icon(Icons.event_note),
-                                label: const Text('Salidas Pendientes'),
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
@@ -942,11 +903,15 @@ class _ReceiveInvitationScreen extends StatefulWidget {
 class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
   late final MobileScannerController _scannerController;
   String? _scannedValue;
+  bool _isInvitationConfirmed = false;
 
   @override
   void initState() {
     super.initState();
-    _scannerController = MobileScannerController();
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      formats: const [BarcodeFormat.qrCode],
+    );
   }
 
   @override
@@ -957,77 +922,135 @@ class _ReceiveInvitationScreenState extends State<_ReceiveInvitationScreen> {
 
   void _handleDetection(BarcodeCapture capture) {
     final value = capture.barcodes
-        .map((barcode) => barcode.rawValue?.trim())
+        .map((barcode) => (barcode.rawValue ?? barcode.displayValue)?.trim())
         .whereType<String>()
         .where((value) => value.isNotEmpty)
         .firstOrNull;
-    if (value == null || value == _scannedValue) {
+    if (value == null || _isInvitationConfirmed) {
       return;
     }
 
     setState(() {
       _scannedValue = value;
+      _isInvitationConfirmed = true;
     });
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('leido')));
+    unawaited(_scannerController.stop());
+    unawaited(SystemSound.play(SystemSoundType.click));
+    unawaited(HapticFeedback.mediumImpact());
+    unawaited(_returnToPlayersAfterConfirmation());
+  }
+
+  Future<void> _returnToPlayersAfterConfirmation() async {
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.of(context).pop(_scannedValue);
   }
 
   @override
   Widget build(BuildContext context) {
-    return _ReservationScreenFrame(
-      title: 'Recibir la invitacion',
-      showBackButton: true,
+    return Stack(
       children: [
-        const Text(
-          'escanea el QR de la invitacion',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF545B66),
-          ),
+        _ReservationScreenFrame(
+          title: 'Recibir la invitacion',
+          showBackButton: true,
+          children: [
+            const Text(
+              'escanea el QR de la invitacion',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF545B66),
+              ),
+            ),
+            const SizedBox(height: 18),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 340,
+                child: MobileScanner(
+                  controller: _scannerController,
+                  onDetect: _handleDetection,
+                  errorBuilder: (context, error) {
+                    return const ColoredBox(
+                      color: Color(0xFF1E2D28),
+                      child: Center(
+                        child: Icon(
+                          Icons.videocam_off,
+                          color: Color(0xFFF6F2EA),
+                          size: 42,
+                        ),
+                      ),
+                    );
+                  },
+                  placeholderBuilder: (context) {
+                    return const ColoredBox(
+                      color: Color(0xFF1E2D28),
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFF6F2EA),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 18),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: SizedBox(
-            height: 340,
-            child: MobileScanner(
-              controller: _scannerController,
-              onDetect: _handleDetection,
-              errorBuilder: (context, error) {
-                return const ColoredBox(
-                  color: Color(0xFF1E2D28),
-                  child: Center(
-                    child: Icon(
-                      Icons.videocam_off,
-                      color: Color(0xFFF6F2EA),
-                      size: 42,
+        if (_isInvitationConfirmed)
+          Positioned.fill(
+            child: AbsorbPointer(
+              child: ColoredBox(
+                color: const Color.fromRGBO(3, 17, 12, 0.78),
+                child: Center(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF6F2EA),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color.fromRGBO(0, 0, 0, 0.28),
+                          blurRadius: 30,
+                          offset: Offset(0, 16),
+                        ),
+                      ],
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 42,
+                        vertical: 34,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: Color(0xFF567B37),
+                            size: 104,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            'invitado',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 30,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF567B37),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                );
-              },
-              placeholderBuilder: (context) {
-                return const ColoredBox(
-                  color: Color(0xFF1E2D28),
-                  child: Center(
-                    child: CircularProgressIndicator(color: Color(0xFFF6F2EA)),
-                  ),
-                );
-              },
+                ),
+              ),
             ),
           ),
-        ),
-        if (_scannedValue != null) ...[
-          const SizedBox(height: 16),
-          SelectableText(
-            _scannedValue!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12, color: Color(0xFF545B66)),
-          ),
-        ],
       ],
     );
   }
@@ -1164,12 +1187,17 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     unawaited(_refreshPlayers());
   }
 
-  void _openInvitationScanner() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+  Future<void> _openInvitationScanner() async {
+    await Navigator.of(context).push<String?>(
+      MaterialPageRoute<String?>(
         builder: (context) => const _ReceiveInvitationScreen(),
       ),
     );
+    if (!mounted) {
+      return;
+    }
+
+    unawaited(_refreshPlayers());
   }
 
   String get _invitationUrl {

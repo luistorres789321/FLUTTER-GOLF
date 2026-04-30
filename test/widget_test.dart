@@ -68,9 +68,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recuperar Ronda'), findsOneWidget);
+    expect(find.text('Recuperar Ronda'), findsNothing);
     expect(find.text('Iniciar Salida'), findsOneWidget);
-    expect(find.text('Salidas Pendientes'), findsOneWidget);
+    expect(find.text('Salidas Pendientes'), findsNothing);
     expect(find.text('Mi Informacion'), findsOneWidget);
     expect(_logoFinder(), findsOneWidget);
 
@@ -78,10 +78,6 @@ void main() {
       find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
     expect(startButton.onPressed, isNotNull);
-    final pendingGamesButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Salidas Pendientes'),
-    );
-    expect(pendingGamesButton.onPressed, isNull);
   });
 
   testWidgets('exits recovered scorecard and returns to home', (
@@ -97,6 +93,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(
+      find.widgetWithText(FilledButton, 'Recuperar Ronda'),
+      findsOneWidget,
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Recuperar Ronda'));
     await tester.pumpAndSettle();
 
@@ -190,7 +190,7 @@ void main() {
     expect(find.text('Invitar a jugadores'), findsOneWidget);
   });
 
-  testWidgets('loads created games and enables pending games button', (
+  testWidgets('loads created games without showing pending games button', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -214,10 +214,7 @@ void main() {
     );
     expect(createdGamesUri.queryParameters['idUsuario'], '123');
 
-    final pendingGamesButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Salidas Pendientes'),
-    );
-    expect(pendingGamesButton.onPressed, isNotNull);
+    expect(find.text('Salidas Pendientes'), findsNothing);
   });
 
   testWidgets('opens reservation flow and validates occupied times', (
@@ -414,13 +411,10 @@ void main() {
       findsOneWidget,
     );
 
-    final recoverButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Recuperar Ronda'),
-    );
     final startButton = tester.widget<OutlinedButton>(
       find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
-    expect(recoverButton.onPressed, isNull);
+    expect(find.text('Recuperar Ronda'), findsNothing);
     expect(startButton.onPressed, isNull);
   });
 
