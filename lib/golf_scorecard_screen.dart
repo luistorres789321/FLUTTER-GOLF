@@ -10,40 +10,14 @@ const _backNine = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 const _summaryHeaders = ['TOTAL', 'HCP JUEGO', 'NETO'];
 const _emptySummary = ['', '', ''];
 
-const _playRows = [
-  _ScoreRowData(
-    label: '',
-    tone: _RowTone.mutedLabel,
-    height: 50,
-    frontValues: ['', '', '', '', '', '', '', '', ''],
-    backValues: ['', '', '', '', '', '', '', '', ''],
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: '',
-    tone: _RowTone.mutedLabel,
-    height: 50,
-    frontValues: ['', '', '', '', '', '', '', '', ''],
-    backValues: ['', '', '', '', '', '', '', '', ''],
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: '',
-    tone: _RowTone.mutedLabel,
-    height: 50,
-    frontValues: ['', '', '', '', '', '', '', '', ''],
-    backValues: ['', '', '', '', '', '', '', '', ''],
-    summaryValues: _emptySummary,
-  ),
-  _ScoreRowData(
-    label: '',
-    tone: _RowTone.mutedLabel,
-    height: 50,
-    frontValues: ['', '', '', '', '', '', '', '', ''],
-    backValues: ['', '', '', '', '', '', '', '', ''],
-    summaryValues: _emptySummary,
-  ),
-];
+const _playRowTemplate = _ScoreRowData(
+  label: '',
+  tone: _RowTone.mutedLabel,
+  height: 50,
+  frontValues: ['', '', '', '', '', '', '', '', ''],
+  backValues: ['', '', '', '', '', '', '', '', ''],
+  summaryValues: _emptySummary,
+);
 
 const _formFields = [
   _FormFieldData(label: 'COMPETICION'),
@@ -112,6 +86,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late final bool _ownsDatosServidorService;
   late List<_ScoreRowData> _guideRows;
   late List<List<String>> _playRowValues;
+  late List<String> _playRowUserIds;
+  late List<String> _playRowPlayerLabels;
   late List<String> _playRowModifiedValues;
   String? _loadError;
 
@@ -123,6 +99,10 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
         widget.datosServidorService ?? DatosServidorService();
     _guideRows = _buildGuideRows();
     _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
+    _playRowUserIds = _decodePlayRowUserIds(widget.initialPlayRowsJson);
+    _playRowPlayerLabels = _decodePlayRowPlayerLabels(
+      widget.initialPlayRowsJson,
+    );
     _playRowModifiedValues = _decodePlayRowModifiedValues(
       widget.initialPlayRowsJson,
     );
@@ -137,6 +117,10 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     }
 
     _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
+    _playRowUserIds = _decodePlayRowUserIds(widget.initialPlayRowsJson);
+    _playRowPlayerLabels = _decodePlayRowPlayerLabels(
+      widget.initialPlayRowsJson,
+    );
     _playRowModifiedValues = _decodePlayRowModifiedValues(
       widget.initialPlayRowsJson,
     );
@@ -179,6 +163,46 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     }
   }
 
+  Future<void> _showLeaveGameConfirmation() async {
+    await _showScorecardConfirmationDialog(
+      message:
+          'Seguro que te das de baja de la partida ? Si lo haces se acabará la partida para ti',
+      confirmLabel: 'Si, dame de baja',
+    );
+  }
+
+  Future<void> _showDestroyCardConfirmation() async {
+    await _showScorecardConfirmationDialog(
+      message:
+          'Seguro que destruyes la tarjeta ? Si lo haces se acabará la partida para todos los jugadores',
+      confirmLabel: 'Si, destruyela',
+    );
+  }
+
+  Future<void> _showScorecardConfirmationDialog({
+    required String message,
+    required String confirmLabel,
+  }) async {
+    await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar accion'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(confirmLabel),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _updatePlayValue(int rowIndex, int holeIndex, String value) {
     setState(() {
       _playRowValues[rowIndex][holeIndex] = value;
@@ -191,11 +215,23 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
   String get _playRowsJsonString {
     final data = List.generate(_playRowValues.length, (rowIndex) {
+      final userId = rowIndex < _playRowUserIds.length
+          ? _playRowUserIds[rowIndex]
+          : '';
+      final playerLabel = rowIndex < _playRowPlayerLabels.length
+          ? _playRowPlayerLabels[rowIndex]
+          : '';
+      final modified = rowIndex < _playRowModifiedValues.length
+          ? _playRowModifiedValues[rowIndex]
+          : '';
+      final values = _normalizedPlayValues(_playRowValues[rowIndex]);
+
       return <String, String>{
-        'jugador': '${rowIndex + 1}',
-        'modificado': _playRowModifiedValues[rowIndex],
+        if (userId.isNotEmpty) 'idUsuario': userId,
+        'jugador': playerLabel.isEmpty ? '${rowIndex + 1}' : playerLabel,
+        'modificado': modified,
         for (var holeIndex = 0; holeIndex < 18; holeIndex++)
-          'hoyo_${holeIndex + 1}': _playRowValues[rowIndex][holeIndex],
+          'hoyo_${holeIndex + 1}': values[holeIndex],
       };
     });
 
@@ -265,32 +301,87 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                             children: [
                               Align(
                                 alignment: Alignment.centerLeft,
-                                child: OutlinedButton.icon(
-                                  onPressed: widget.onExit,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: const Color(0xFFF6F2EA),
-                                    backgroundColor: const Color.fromRGBO(
-                                      11,
-                                      36,
-                                      26,
-                                      0.32,
+                                child: Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      onPressed: widget.onExit,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(
+                                          0xFFF6F2EA,
+                                        ),
+                                        backgroundColor: const Color.fromRGBO(
+                                          11,
+                                          36,
+                                          26,
+                                          0.32,
+                                        ),
+                                        side: const BorderSide(
+                                          color: Color(0xFFF6F2EA),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 18,
+                                          vertical: 14,
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.arrow_back),
+                                      label: const Text('Salir'),
                                     ),
-                                    side: const BorderSide(
-                                      color: Color(0xFFF6F2EA),
+                                    OutlinedButton.icon(
+                                      onPressed: _showLeaveGameConfirmation,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(
+                                          0xFFF6F2EA,
+                                        ),
+                                        backgroundColor: const Color.fromRGBO(
+                                          107,
+                                          67,
+                                          45,
+                                          0.28,
+                                        ),
+                                        side: const BorderSide(
+                                          color: Color(0xFFF6F2EA),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 18,
+                                          vertical: 14,
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.person_remove),
+                                      label: const Text('Darme de baja'),
                                     ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 18,
-                                      vertical: 14,
+                                    OutlinedButton.icon(
+                                      onPressed: _showDestroyCardConfirmation,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: const Color(
+                                          0xFFF6F2EA,
+                                        ),
+                                        backgroundColor: const Color.fromRGBO(
+                                          139,
+                                          58,
+                                          52,
+                                          0.32,
+                                        ),
+                                        side: const BorderSide(
+                                          color: Color(0xFFF6F2EA),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 18,
+                                          vertical: 14,
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.delete_forever),
+                                      label: const Text('Destruir Tarjeta'),
                                     ),
-                                  ),
-                                  icon: const Icon(Icons.arrow_back),
-                                  label: const Text('Salir'),
+                                  ],
                                 ),
                               ),
                               const SizedBox(height: 12),
                               _ScorecardCard(
                                 guideRows: _guideRows,
                                 playRowValues: _playRowValues,
+                                playRowLabels: _playRowPlayerLabels,
                                 idPartida: widget.idPartida,
                                 jugadores: widget.jugadores,
                                 loadError: _loadError,
@@ -319,6 +410,7 @@ class _ScorecardCard extends StatelessWidget {
   const _ScorecardCard({
     required this.guideRows,
     required this.playRowValues,
+    required this.playRowLabels,
     required this.idPartida,
     required this.jugadores,
     required this.loadError,
@@ -329,6 +421,7 @@ class _ScorecardCard extends StatelessWidget {
 
   final List<_ScoreRowData> guideRows;
   final List<List<String>> playRowValues;
+  final List<String> playRowLabels;
   final String idPartida;
   final String jugadores;
   final String? loadError;
@@ -392,7 +485,7 @@ class _ScorecardCard extends StatelessWidget {
                 _ScoreGrid(
                   guideRows: guideRows,
                   playRowValues: playRowValues,
-                  jugadores: jugadores,
+                  playRowLabels: playRowLabels,
                   onPlayValueChanged: onPlayValueChanged,
                 ),
                 if (loadError != null) ...[
@@ -449,13 +542,13 @@ class _ScoreGrid extends StatelessWidget {
   const _ScoreGrid({
     required this.guideRows,
     required this.playRowValues,
-    required this.jugadores,
+    required this.playRowLabels,
     required this.onPlayValueChanged,
   });
 
   final List<_ScoreRowData> guideRows;
   final List<List<String>> playRowValues;
-  final String jugadores;
+  final List<String> playRowLabels;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
 
@@ -465,15 +558,19 @@ class _ScoreGrid extends StatelessWidget {
       children: [
         const _GridHeaderRow(),
         ...guideRows.map(_GridDataRow.new),
-        ..._playRows.asMap().entries.map(
-          (entry) => _GridPlayRow(
-            row: entry.value,
-            rowIndex: entry.key,
-            values: playRowValues[entry.key],
-            isEditable: entry.key < (int.tryParse(jugadores) ?? 0).clamp(0, 4),
+        ...playRowValues.asMap().entries.map((entry) {
+          final rowIndex = entry.key;
+          return _GridPlayRow(
+            row: _playRowTemplate,
+            rowIndex: rowIndex,
+            values: entry.value,
+            playerLabel: rowIndex < playRowLabels.length
+                ? playRowLabels[rowIndex]
+                : '${rowIndex + 1}',
+            isEditable: true,
             onValueChanged: onPlayValueChanged,
-          ),
-        ),
+          );
+        }),
       ],
     );
   }
@@ -591,6 +688,7 @@ class _GridPlayRow extends StatelessWidget {
     required this.row,
     required this.rowIndex,
     required this.values,
+    required this.playerLabel,
     required this.isEditable,
     required this.onValueChanged,
   });
@@ -598,6 +696,7 @@ class _GridPlayRow extends StatelessWidget {
   final _ScoreRowData row;
   final int rowIndex;
   final List<String> values;
+  final String playerLabel;
   final bool isEditable;
   final void Function(int rowIndex, int holeIndex, String value) onValueChanged;
 
@@ -617,7 +716,7 @@ class _GridPlayRow extends StatelessWidget {
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.symmetric(horizontal: 14),
             isLabel: true,
-            child: _RowLabel(row: row),
+            child: _PlayRowLabel(label: playerLabel, isEditable: isEditable),
           ),
           for (final entry in frontValues.asMap().entries)
             _GridCell.data(
@@ -1182,6 +1281,31 @@ class _RowLabel extends StatelessWidget {
   }
 }
 
+class _PlayRowLabel extends StatelessWidget {
+  const _PlayRowLabel({required this.label, required this.isEditable});
+
+  final String label;
+  final bool isEditable;
+
+  @override
+  Widget build(BuildContext context) {
+    if (label.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 20,
+        fontWeight: FontWeight.w600,
+        color: isEditable ? const Color(0xFF4F5B43) : const Color(0xFF8D928B),
+      ),
+    );
+  }
+}
+
 class _ValueText extends StatelessWidget {
   const _ValueText(this.value);
 
@@ -1258,7 +1382,7 @@ class _NumericGridInputState extends State<_NumericGridInput> {
       smartQuotesType: SmartQuotesType.disabled,
       textAlign: TextAlign.center,
       style: TextStyle(
-        fontSize: 15,
+        fontSize: 20,
         fontWeight: FontWeight.w600,
         color: widget.enabled
             ? const Color(0xFF545B66)
@@ -1501,62 +1625,106 @@ List<_ScoreRowData> _buildGuideRows() {
 }
 
 List<List<String>> _decodePlayRows(String rawJson) {
-  final emptyRows = List.generate(4, (_) => List.filled(18, ''));
+  return _decodePlayRowStates(
+    rawJson,
+  ).map((row) => row.values).toList(growable: false);
+}
 
-  try {
-    final decoded = jsonDecode(rawJson);
-    if (decoded is! List) {
-      return emptyRows;
-    }
+List<String> _decodePlayRowUserIds(String rawJson) {
+  return _decodePlayRowStates(
+    rawJson,
+  ).map((row) => row.userId).toList(growable: false);
+}
 
-    for (
-      var rowIndex = 0;
-      rowIndex < 4 && rowIndex < decoded.length;
-      rowIndex++
-    ) {
-      final row = decoded[rowIndex];
-      if (row is! Map) {
-        continue;
-      }
-      for (var holeIndex = 0; holeIndex < 18; holeIndex++) {
-        final value = row['hoyo_${holeIndex + 1}'];
-        emptyRows[rowIndex][holeIndex] = value == null ? '' : '$value';
-      }
-    }
-  } catch (_) {
-    return emptyRows;
-  }
-
-  return emptyRows;
+List<String> _decodePlayRowPlayerLabels(String rawJson) {
+  return _decodePlayRowStates(
+    rawJson,
+  ).map((row) => row.playerLabel).toList(growable: false);
 }
 
 List<String> _decodePlayRowModifiedValues(String rawJson) {
-  final modifiedValues = List.filled(4, '');
+  return _decodePlayRowStates(
+    rawJson,
+  ).map((row) => row.modified).toList(growable: false);
+}
 
-  try {
-    final decoded = jsonDecode(rawJson);
-    if (decoded is! List) {
-      return modifiedValues;
-    }
-
-    for (
-      var rowIndex = 0;
-      rowIndex < 4 && rowIndex < decoded.length;
-      rowIndex++
-    ) {
-      final row = decoded[rowIndex];
-      if (row is! Map) {
-        continue;
-      }
-
-      final value = row['modificado'];
-      modifiedValues[rowIndex] = value == null ? '' : '$value';
-    }
-  } catch (_) {
-    return modifiedValues;
+List<_DecodedPlayRow> _decodePlayRowStates(String rawJson) {
+  final decoded = _decodePlayRowsList(rawJson);
+  if (decoded == null) {
+    return const [];
   }
 
-  return modifiedValues;
+  final rows = <_DecodedPlayRow>[];
+  for (var rowIndex = 0; rowIndex < decoded.length; rowIndex++) {
+    final row = decoded[rowIndex];
+    if (row is! Map) {
+      continue;
+    }
+
+    final userId = '${row['idUsuario'] ?? row['idJugador'] ?? ''}'.trim();
+    final rawPlayerLabel = '${row['jugador'] ?? ''}'.trim();
+    final values = List.generate(18, (holeIndex) {
+      final value = row['hoyo_${holeIndex + 1}'];
+      return value == null ? '' : '$value';
+    }, growable: false);
+    final hasScores = values.any((value) => value.trim().isNotEmpty);
+    final hasPlayer =
+        userId.isNotEmpty ||
+        (rawPlayerLabel.isNotEmpty &&
+            !_isPlaceholderPlayerLabel(rawPlayerLabel, rowIndex));
+
+    if (!hasPlayer && !hasScores) {
+      continue;
+    }
+
+    rows.add(
+      _DecodedPlayRow(
+        userId: userId,
+        playerLabel: rawPlayerLabel.isEmpty
+            ? '${rows.length + 1}'
+            : rawPlayerLabel,
+        modified: '${row['modificado'] ?? ''}',
+        values: values,
+      ),
+    );
+  }
+
+  return rows;
+}
+
+bool _isPlaceholderPlayerLabel(String label, int rowIndex) {
+  return label.trim() == '${rowIndex + 1}';
+}
+
+List<String> _normalizedPlayValues(List<String> values) {
+  return List.generate(
+    18,
+    (index) => index < values.length ? values[index] : '',
+    growable: false,
+  );
+}
+
+List<dynamic>? _decodePlayRowsList(String rawJson) {
+  final decoded = _decodeJsonLikePayload(rawJson.trim());
+  return decoded is List ? decoded : null;
+}
+
+Object? _decodeJsonLikePayload(String rawPayload) {
+  if (rawPayload.isEmpty) {
+    return null;
+  }
+
+  try {
+    return jsonDecode(rawPayload);
+  } catch (_) {
+    // Algunas respuestas antiguas del backend llegan con comillas simples.
+  }
+
+  try {
+    return jsonDecode(rawPayload.replaceAll("'", '"'));
+  } catch (_) {
+    return null;
+  }
 }
 
 String _formatModifiedTimestamp(DateTime dateTime) {
@@ -1568,6 +1736,20 @@ String _formatModifiedTimestamp(DateTime dateTime) {
       '${twoDigits(dateTime.hour)}'
       '${twoDigits(dateTime.minute)}'
       '${twoDigits(dateTime.second)}';
+}
+
+class _DecodedPlayRow {
+  const _DecodedPlayRow({
+    required this.userId,
+    required this.playerLabel,
+    required this.modified,
+    required this.values,
+  });
+
+  final String userId;
+  final String playerLabel;
+  final String modified;
+  final List<String> values;
 }
 
 class _FormFieldData {

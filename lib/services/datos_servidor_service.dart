@@ -39,17 +39,16 @@ class DatosServidorService {
     });
   }
 
-  Future<String> creaPartida(
-    String idCampo,
-    String idPartida,
-    String jugadores,
-  ) {
+  Future<String> creaPartida(String idCampo, String idPartida) {
     return _getTexto({
       'accion': 'crea_partida',
       'idCampo': idCampo,
       'idPartida': idPartida,
-      'jugadores': jugadores,
     });
+  }
+
+  Future<String> empezarPartida(String idPartida) {
+    return _getTexto({'accion': 'empezar_partida', 'idPartida': idPartida});
   }
 
   Future<String> obtenerJugadoresPartida(String idPartida) {
@@ -162,9 +161,9 @@ class DatosServidorService {
     });
   }
 
-  Future<String> obtenerPartidasCreadas(String idUsuario) {
+  Future<String> obtenerEstadoInicial(String idUsuario) {
     return _getTexto({
-      'accion': 'obtener_partidas_creadas',
+      'accion': 'obtener_estado_inicial',
       'idUsuario': idUsuario,
     });
   }

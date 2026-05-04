@@ -69,14 +69,32 @@ void main() {
         }),
       );
 
-      final result = await service.creaPartida('1', 'ABC123XYZ9', '3');
+      final result = await service.creaPartida('1', 'ABC123XYZ9');
 
       expect(result, 'ok');
       expect(requestedUri.queryParameters, {
         'accion': 'crea_partida',
         'idCampo': '1',
         'idPartida': 'ABC123XYZ9',
-        'jugadores': '3',
+      });
+    });
+
+    test('construye la query de empezarPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.empezarPartida('ABC123XYZ9');
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'empezar_partida',
+        'idPartida': 'ABC123XYZ9',
       });
     });
 
@@ -287,21 +305,24 @@ void main() {
       });
     });
 
-    test('construye la query de obtenerPartidasCreadas', () async {
+    test('construye la query de obtenerEstadoInicial', () async {
       late Uri requestedUri;
 
       final service = DatosServidorService(
         client: MockClient((request) async {
           requestedUri = request.url;
-          return http.Response("[{'idPartida':'X12345'}]", 200);
+          return http.Response(
+            "{'empezada':'260503123400','ultima_modificacion':''}",
+            200,
+          );
         }),
       );
 
-      final result = await service.obtenerPartidasCreadas('Z44456');
+      final result = await service.obtenerEstadoInicial('Z44456');
 
-      expect(result, "[{'idPartida':'X12345'}]");
+      expect(result, "{'empezada':'260503123400','ultima_modificacion':''}");
       expect(requestedUri.queryParameters, {
-        'accion': 'obtener_partidas_creadas',
+        'accion': 'obtener_estado_inicial',
         'idUsuario': 'Z44456',
       });
     });

@@ -80,7 +80,55 @@ void main() {
     expect(startButton.onPressed, isNotNull);
   });
 
-  testWidgets('exits recovered scorecard and returns to home', (
+  testWidgets('shows start game button when backend state has started game', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          initialStateResponse:
+              "{'empezada':'260503123400','ultima_modificacion':''}",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.widgetWithText(FilledButton, 'Iniciar Partida'),
+      findsOneWidget,
+    );
+    expect(find.text('Iniciar Salida'), findsNothing);
+  });
+
+  testWidgets('shows continue game button when backend state has modification', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          initialStateResponse:
+              "{'empezada':'260503123400','ultima_modificacion':'260503124400'}",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.widgetWithText(FilledButton, 'Continuar Partida'),
+      findsOneWidget,
+    );
+    expect(find.text('Iniciar Salida'), findsNothing);
+  });
+
+  testWidgets('does not show recover round button for saved game', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -93,22 +141,43 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.widgetWithText(FilledButton, 'Recuperar Ronda'),
-      findsOneWidget,
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Recuperar Ronda'));
-    await tester.pumpAndSettle();
-
-    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
-    expect(find.text('Iniciar Salida'), findsNothing);
-
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Salir'));
-    await tester.pumpAndSettle();
-
+    expect(find.text('Recuperar Ronda'), findsNothing);
     expect(find.text('Tarjeta de golf'), findsOneWidget);
     expect(find.text('Iniciar Salida'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, 'Salir'), findsNothing);
+  });
+
+  testWidgets('uses saved game id when opening players from home', (
+    WidgetTester tester,
+  ) async {
+    const savedIdPartida = 'ABC123XYZ9';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': savedIdPartida,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jugadores'), findsOneWidget);
+    expect(find.text('Sin jugadores'), findsOneWidget);
+
+    final playerRequest = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'obtener_jugadores_partida',
+    );
+    expect(playerRequest.queryParameters['idPartida'], savedIdPartida);
+    expect(
+      requests.where((uri) => uri.queryParameters['accion'] == 'crea_partida'),
+      isEmpty,
+    );
   });
 
   testWidgets('opens players and creates invitation game without creator', (
@@ -146,7 +215,7 @@ void main() {
     final createUri = requests.firstWhere(
       (uri) => uri.queryParameters['accion'] == 'crea_partida',
     );
-    expect(createUri.queryParameters['jugadores'], '1');
+    expect(createUri.queryParameters.containsKey('jugadores'), isFalse);
     final idPartida = createUri.queryParameters['idPartida']!;
 
     final playerRequests = requests.where(
@@ -184,7 +253,243 @@ void main() {
     expect(find.text('Invitar a jugadores'), findsOneWidget);
   });
 
-  testWidgets('loads created games without showing pending games button', (
+  testWidgets(
+    'renews invitation game when current user is missing from players',
+    (WidgetTester tester) async {
+      const oldIdPartida = 'partida-vieja';
+      SharedPreferences.setMockInitialValues({
+        'saved_user_information_json': _userInformationJson(),
+        'saved_user_registered': true,
+        'invitation_game_id': oldIdPartida,
+        'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      final requests = <Uri>[];
+
+      await tester.pumpWidget(
+        GolfScorecardApp(
+          datosServidorService: _existingFieldsService(
+            requests: requests,
+            playersResponseForGame: (idPartida) {
+              if (idPartida == oldIdPartida) {
+                return "[{'idJugador':'999','allias':'Luis','es_creador':'N'}]";
+              }
+
+              return '[]';
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Jugadores'), findsOneWidget);
+      expect(find.text('Sin jugadores'), findsOneWidget);
+
+      final createdIds = requests
+          .where((uri) => uri.queryParameters['accion'] == 'crea_partida')
+          .map((uri) => uri.queryParameters['idPartida'])
+          .whereType<String>()
+          .toList();
+      expect(createdIds, hasLength(1));
+      expect(createdIds.single, isNot(oldIdPartida));
+
+      final playerRequestIds = requests
+          .where(
+            (uri) =>
+                uri.queryParameters['accion'] == 'obtener_jugadores_partida',
+          )
+          .map((uri) => uri.queryParameters['idPartida'])
+          .toList();
+      expect(playerRequestIds, contains(oldIdPartida));
+      expect(playerRequestIds, contains(createdIds.single));
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('invitation_game_id'), createdIds.single);
+      expect(prefs.getString('saved_game_id'), createdIds.single);
+    },
+  );
+
+  testWidgets('starts player game and opens scorecard', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          playersResponseForGame: (_) {
+            return "[{'idJugador':'123','allias':'Auto','es_creador':'S'},"
+                "{'idJugador':'999','allias':'Luis','es_creador':'N'}]";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jugadores'), findsOneWidget);
+    expect(find.text('Empezar la Partida'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pumpAndSettle();
+
+    final startUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+    );
+    expect(startUri.queryParameters['idPartida'], idPartida);
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(
+      find.widgetWithText(OutlinedButton, 'Darme de baja'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(OutlinedButton, 'Destruir Tarjeta'),
+      findsOneWidget,
+    );
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('Luis'), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(36));
+    expect(find.text('Jugadores'), findsNothing);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Darme de baja'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Seguro que te das de baja de la partida ? Si lo haces se acabará la partida para ti',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'Si, dame de baja'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(TextButton, 'Cancelar accion'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Cancelar accion'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cancelar accion'), findsNothing);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Destruir Tarjeta'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Seguro que destruyes la tarjeta ? Si lo haces se acabará la partida para todos los jugadores',
+      ),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Si, destruyela'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Cancelar accion'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Cancelar accion'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cancelar accion'), findsNothing);
+  });
+
+  testWidgets('opens scorecard with more than four player rows', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          playersResponseForGame: (_) {
+            return "[{'idJugador':'123','allias':'Auto','es_creador':'S'},"
+                "{'idJugador':'999','allias':'Luis','es_creador':'N'},"
+                "{'idJugador':'777','allias':'Marta','es_creador':'N'},"
+                "{'idJugador':'666','allias':'Ana','es_creador':'N'},"
+                "{'idJugador':'555','allias':'Pau','es_creador':'N'}]";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('Luis'), findsOneWidget);
+    expect(find.text('Marta'), findsOneWidget);
+    expect(find.text('Ana'), findsOneWidget);
+    expect(find.text('Pau'), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(90));
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('saved_players'), '5');
+    final rows = jsonDecode(prefs.getString('saved_game_rows_json')!) as List;
+    expect(rows, hasLength(5));
+  });
+
+  testWidgets('opens scorecard when players response says game started', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          playersResponseForGame: (_) {
+            return "{'empezada':'260503124300','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('Jugadores'), findsNothing);
+    expect(
+      requests.where(
+        (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+      ),
+      isEmpty,
+    );
+  });
+
+  testWidgets('loads initial state without showing pending games button', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -196,17 +501,16 @@ void main() {
       GolfScorecardApp(
         datosServidorService: _existingFieldsService(
           requests: requests,
-          createdGamesResponse:
-              "[{'idPartida':'X12345','es_creador':'S','dia':'260430','hora':'1235','idUsuarioCreador':'Z44456','aliasCreador':'Karles','movilCreador':'666000555'}]",
+          initialStateResponse: "{'empezada':'','ultima_modificacion':''}",
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    final createdGamesUri = requests.firstWhere(
-      (uri) => uri.queryParameters['accion'] == 'obtener_partidas_creadas',
+    final initialStateUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'obtener_estado_inicial',
     );
-    expect(createdGamesUri.queryParameters['idUsuario'], '123');
+    expect(initialStateUri.queryParameters['idUsuario'], '123');
 
     expect(find.text('Salidas Pendientes'), findsNothing);
   });
@@ -648,7 +952,8 @@ DatosServidorService _existingFieldsService({
   bool existingMovil = false,
   bool altaUsuarioOk = true,
   List<Uri>? requests,
-  String createdGamesResponse = '[]',
+  String initialStateResponse = "{'empezada':'','ultima_modificacion':''}",
+  String Function(String? idPartida)? playersResponseForGame,
 }) {
   final annotatedInvitationGames = <String>{};
 
@@ -670,6 +975,10 @@ DatosServidorService _existingFieldsService({
         return http.Response(jsonEncode({'rpta': 'ok'}), 200);
       }
 
+      if (accion == 'empezar_partida') {
+        return http.Response(jsonEncode({'rpta': 'ok'}), 200);
+      }
+
       if (accion == 'obtener_json_hoyos') {
         return http.Response(jsonEncode({'rpta': 'ok'}), 200);
       }
@@ -680,6 +989,11 @@ DatosServidorService _existingFieldsService({
 
       if (accion == 'obtener_jugadores_partida') {
         final idPartida = request.url.queryParameters['idPartida'];
+        final playersResponse = playersResponseForGame?.call(idPartida);
+        if (playersResponse != null) {
+          return http.Response(playersResponse, 200);
+        }
+
         if (idPartida != null && annotatedInvitationGames.contains(idPartida)) {
           return http.Response(
             "[{'idJugador':'123','allias':'Auto','es_creador':'S'}]",
@@ -722,8 +1036,8 @@ DatosServidorService _existingFieldsService({
         return http.Response("{'rpta':'ok'}", 200);
       }
 
-      if (accion == 'obtener_partidas_creadas') {
-        return http.Response(createdGamesResponse, 200);
+      if (accion == 'obtener_estado_inicial') {
+        return http.Response(initialStateResponse, 200);
       }
 
       final exists = switch (accion) {

@@ -64,7 +64,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   static const _invitationGameIdKey = 'invitation_game_id';
   static const _invitationGameCreatedAtKey = 'invitation_game_created_at';
   static const _defaultFieldId = '1';
-  static const _defaultPlayers = '3';
   static const _jsonHoyosPollDelay = Duration(seconds: 5);
   static const _invitationGameLifetime = Duration(hours: 2);
 
@@ -75,11 +74,10 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   bool _isLoading = true;
   String? _savedGameId;
   String _savedFieldId = _defaultFieldId;
-  String _savedPlayers = _defaultPlayers;
-  String _savedRowsJson = _createEmptyPlayRowsJson();
   String? _differentRemotePlayRowsJson;
   String? _creationError;
   String? _userRegistrationError;
+  _InitialGameState _initialGameState = const _InitialGameState();
   _GameSession? _activeSession;
   _UserInformation? _userInformation;
   bool _isUserRegistered = false;
@@ -108,9 +106,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     final prefs = await SharedPreferences.getInstance();
     final savedGameId = prefs.getString(_savedGameIdKey);
     final savedFieldId = prefs.getString(_savedFieldIdKey) ?? _defaultFieldId;
-    final savedPlayers = prefs.getString(_savedPlayersKey) ?? _defaultPlayers;
-    final savedRowsJson =
-        prefs.getString(_savedGameRowsKey) ?? _createEmptyPlayRowsJson();
     await _validInvitationGameIdFromPrefs(prefs);
     final userInformation = _UserInformation.fromJsonString(
       prefs.getString(_savedUserInformationKey),
@@ -126,8 +121,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     setState(() {
       _savedGameId = savedGameId;
       _savedFieldId = savedFieldId;
-      _savedPlayers = savedPlayers;
-      _savedRowsJson = savedRowsJson;
       _userInformation = userInformation;
       _isUserRegistered = isUserRegistered;
       _userRegistrationError = isUserRegistered
@@ -137,7 +130,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     });
 
     if (isUserRegistered && userInformation.idUsuario.isNotEmpty) {
-      unawaited(_loadCreatedGames(userInformation.idUsuario));
+      unawaited(_loadInitialGameState(userInformation.idUsuario));
     }
   }
 
@@ -163,7 +156,17 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   }
 
   Future<String?> _loadValidInvitationGameId() async {
+    final savedGameId = _savedGameId?.trim();
+    if (savedGameId != null && savedGameId.isNotEmpty) {
+      return savedGameId;
+    }
+
     final prefs = await SharedPreferences.getInstance();
+    final persistedSavedGameId = prefs.getString(_savedGameIdKey)?.trim();
+    if (persistedSavedGameId != null && persistedSavedGameId.isNotEmpty) {
+      return persistedSavedGameId;
+    }
+
     return _validInvitationGameIdFromPrefs(prefs);
   }
 
@@ -209,18 +212,25 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     });
 
     if (isRegistered && savedInformation.idUsuario.isNotEmpty) {
-      unawaited(_loadCreatedGames(savedInformation.idUsuario));
+      unawaited(_loadInitialGameState(savedInformation.idUsuario));
     }
   }
 
-  Future<void> _loadCreatedGames(String idUsuario) async {
+  Future<void> _loadInitialGameState(String idUsuario) async {
     try {
-      final response = await _datosServidorService.obtenerPartidasCreadas(
+      final response = await _datosServidorService.obtenerEstadoInicial(
         idUsuario,
       );
-      _createdGamesFromResponse(response);
+      final initialGameState = _initialGameStateFromResponse(response);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _initialGameState = initialGameState;
+      });
     } catch (error) {
-      debugPrint('obtener partidas creadas fallo: $error');
+      debugPrint('obtener estado inicial fallo: $error');
     }
   }
 
@@ -245,7 +255,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     });
   }
 
-  void _openStartRoundOptions() {
+  Future<void> _openStartRoundOptions() async {
     final idUsuario = _userInformation?.idUsuario ?? '';
     if (idUsuario.isEmpty) {
       setState(() {
@@ -260,8 +270,8 @@ class _GolfAppHomeState extends State<GolfAppHome> {
       _userRegistrationError = null;
     });
 
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+    final session = await Navigator.of(context).push<_GameSession>(
+      MaterialPageRoute<_GameSession>(
         builder: (context) => _InvitePlayersScreen(
           datosServidorService: _datosServidorService,
           fieldId: _savedFieldId,
@@ -273,6 +283,33 @@ class _GolfAppHomeState extends State<GolfAppHome> {
         ),
       ),
     );
+    if (!mounted || session == null) {
+      return;
+    }
+
+    await _activateSession(session);
+  }
+
+  Future<void> _activateSession(_GameSession session) async {
+    _stopJsonHoyosPolling();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_savedGameIdKey, session.idPartida);
+    await prefs.setString(_savedFieldIdKey, session.idCampo);
+    await prefs.setString(_savedPlayersKey, session.jugadores);
+    await prefs.setString(_savedGameRowsKey, session.playRowsJson);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _creationError = null;
+      _differentRemotePlayRowsJson = null;
+      _savedGameId = session.idPartida;
+      _savedFieldId = session.idCampo;
+      _activeSession = session;
+    });
+    _startJsonHoyosPolling();
   }
 
   Future<void> _saveAcceptedInvitationGameId(String idPartida) async {
@@ -296,25 +333,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     setState(() {
       _savedGameId = acceptedIdPartida;
     });
-  }
-
-  void _recoverGame() {
-    final savedGameId = _savedGameId;
-    if (savedGameId == null) {
-      return;
-    }
-
-    setState(() {
-      _creationError = null;
-      _differentRemotePlayRowsJson = null;
-      _activeSession = _GameSession(
-        idPartida: savedGameId,
-        idCampo: _savedFieldId,
-        jugadores: _savedPlayers,
-        playRowsJson: _savedRowsJson,
-      );
-    });
-    _startJsonHoyosPolling();
   }
 
   void _openReservationDaySelection() {
@@ -400,8 +418,6 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     setState(() {
       _savedGameId = session.idPartida;
       _savedFieldId = session.idCampo;
-      _savedPlayers = session.jugadores;
-      _savedRowsJson = playRowsJson;
       _activeSession = _GameSession(
         idPartida: session.idPartida,
         idCampo: session.idCampo,
@@ -521,7 +537,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
 
     final idUsuario = _userInformation?.idUsuario;
     if (_isUserRegistered && idUsuario != null && idUsuario.isNotEmpty) {
-      unawaited(_loadCreatedGames(idUsuario));
+      unawaited(_loadInitialGameState(idUsuario));
     }
   }
 
@@ -560,6 +576,8 @@ class _GolfAppHomeState extends State<GolfAppHome> {
         canUseGameActions &&
         recoverableGameId != null &&
         recoverableGameId.isNotEmpty;
+    final primaryStartLabel = _initialGameState.startButtonLabel;
+    final hasStartedGame = _initialGameState.hasStarted;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B241A),
@@ -615,15 +633,29 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              Text(
-                                hasRecoverableGame
-                                    ? 'Jugador: $playerAlias\nidPartida: $recoverableGameId'
-                                    : 'Jugador: $playerAlias\n ',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Color(0xFF6C737D),
-                                ),
+                              Column(
+                                children: [
+                                  Text(
+                                    'Jugador: $playerAlias',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      color: Color(0xFF4B525C),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  if (hasRecoverableGame)
+                                    Text(
+                                      'idPartida: $recoverableGameId',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF9AA1AA),
+                                      ),
+                                    )
+                                  else
+                                    const SizedBox(height: 15),
+                                ],
                               ),
                               if (_userRegistrationError != null) ...[
                                 const SizedBox(height: 12),
@@ -648,9 +680,11 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                 ),
                               ],
                               const SizedBox(height: 28),
-                              if (hasRecoverableGame) ...[
+                              if (hasStartedGame)
                                 FilledButton.icon(
-                                  onPressed: _recoverGame,
+                                  onPressed: canUseGameActions
+                                      ? _openStartRoundOptions
+                                      : null,
                                   style: FilledButton.styleFrom(
                                     backgroundColor: const Color(0xFF567B37),
                                     disabledBackgroundColor: const Color(
@@ -660,27 +694,26 @@ class _GolfAppHomeState extends State<GolfAppHome> {
                                       vertical: 18,
                                     ),
                                   ),
-                                  icon: const Icon(Icons.restore),
-                                  label: const Text('Recuperar Ronda'),
-                                ),
-                                const SizedBox(height: 14),
-                              ],
-                              OutlinedButton.icon(
-                                onPressed: canUseGameActions
-                                    ? _openStartRoundOptions
-                                    : null,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFF6B432D),
-                                  side: const BorderSide(
-                                    color: Color(0xFF6B432D),
+                                  icon: const Icon(Icons.play_arrow),
+                                  label: Text(primaryStartLabel),
+                                )
+                              else
+                                OutlinedButton.icon(
+                                  onPressed: canUseGameActions
+                                      ? _openStartRoundOptions
+                                      : null,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF6B432D),
+                                    side: const BorderSide(
+                                      color: Color(0xFF6B432D),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 18,
+                                    ),
                                   ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 18,
-                                  ),
+                                  icon: const Icon(Icons.play_arrow),
+                                  label: Text(primaryStartLabel),
                                 ),
-                                icon: const Icon(Icons.play_arrow),
-                                label: const Text('Iniciar Salida'),
-                              ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
                                 onPressed: canUseGameActions
@@ -801,6 +834,53 @@ class _GolfLogo extends StatelessWidget {
         fit: BoxFit.contain,
         semanticLabel: 'Logo golf',
       ),
+    );
+  }
+}
+
+class _BackendResponsePanel extends StatelessWidget {
+  const _BackendResponsePanel({required this.responseText});
+
+  final String responseText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Respuesta backend',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF545B66),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          constraints: const BoxConstraints(maxHeight: 220),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF10261D),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0x33545B66)),
+          ),
+          child: SingleChildScrollView(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(
+                responseText,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  fontFamily: 'monospace',
+                  color: Color(0xFFF6F2EA),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1324,9 +1404,11 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
   int _playersRefreshGeneration = 0;
   bool _isLoading = true;
   bool _isShowingQr = false;
+  bool _isStartingGame = false;
   final Set<String> _deletingPlayerIds = <String>{};
   String? _idPartida;
   String? _error;
+  String? _backendDebugText;
   List<_InvitedPlayer> _players = const [];
 
   @override
@@ -1345,6 +1427,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _backendDebugText = null;
     });
 
     try {
@@ -1355,18 +1438,34 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       var idPartida = hasValidInvitationGame
           ? validInvitationGameId
           : widget.generateIdPartida();
-      var players = await _fetchPlayers(idPartida);
+      final playersResponse = await _fetchPlayersResponse(idPartida);
+      var players = playersResponse.players;
 
       if (!hasValidInvitationGame) {
-        await widget.datosServidorService.creaPartida(
+        final createResponse = await widget.datosServidorService.creaPartida(
           widget.fieldId,
           idPartida,
-          '1',
+        );
+        _setBackendDebugText(
+          _backendCallDisplayText('crea_partida', {
+            'idCampo': widget.fieldId,
+            'idPartida': idPartida,
+          }, createResponse),
         );
         await widget.onInvitationGameCreated(idPartida);
       }
 
       if (!mounted) {
+        return;
+      }
+
+      if (playersResponse.hasStarted) {
+        _openScorecardForPlayers(idPartida: idPartida, players: players);
+        return;
+      }
+
+      if (await _resetCurrentUserGameIfMissing(players, idPartida: idPartida)) {
+        _startPlayersRefreshPolling();
         return;
       }
 
@@ -1377,6 +1476,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       });
       _startPlayersRefreshPolling();
     } catch (error) {
+      debugPrint('preparar invitacion jugadores fallo: $error');
       if (!mounted) {
         return;
       }
@@ -1384,16 +1484,29 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       setState(() {
         _isLoading = false;
         _error = 'No se pudo preparar la invitacion de jugadores.';
+        _backendDebugText = _backendErrorDisplayText(error);
       });
     }
   }
 
-  Future<List<_InvitedPlayer>> _fetchPlayers(String idPartida) async {
+  Future<_InvitedPlayersResponse> _fetchPlayersResponse(
+    String idPartida,
+  ) async {
     final response = await widget.datosServidorService.obtenerJugadoresPartida(
       idPartida,
     );
     debugPrint('obtenerJugadoresPartida($idPartida): $response');
-    return _invitedPlayersFromResponse(response);
+    _setBackendDebugText(
+      _backendCallDisplayText('obtener_jugadores_partida', {
+        'idPartida': idPartida,
+      }, response),
+    );
+    return _invitedPlayersResponseFromResponse(response);
+  }
+
+  Future<List<_InvitedPlayer>> _fetchPlayers(String idPartida) async {
+    final response = await _fetchPlayersResponse(idPartida);
+    return response.players;
   }
 
   void _startPlayersRefreshPolling() {
@@ -1433,8 +1546,18 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     }
 
     try {
-      final players = await _fetchPlayers(idPartida);
+      final playersResponse = await _fetchPlayersResponse(idPartida);
+      final players = playersResponse.players;
       if (!mounted) {
+        return;
+      }
+
+      if (playersResponse.hasStarted) {
+        _openScorecardForPlayers(idPartida: idPartida, players: players);
+        return;
+      }
+
+      if (await _resetCurrentUserGameIfMissing(players, idPartida: idPartida)) {
         return;
       }
 
@@ -1442,13 +1565,14 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         _players = players;
         _error = null;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) {
         return;
       }
 
       setState(() {
         _error = 'No se pudo actualizar la lista de jugadores.';
+        _backendDebugText = _backendErrorDisplayText(error);
       });
     } finally {
       if (pollingGeneration != null &&
@@ -1513,6 +1637,41 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
 
   bool _isCurrentUser(_InvitedPlayer player) {
     return player.idJugador.trim() == widget.idUsuario.trim();
+  }
+
+  bool _playersContainCurrentUser(List<_InvitedPlayer> players) {
+    return players.any(_isCurrentUser);
+  }
+
+  Future<bool> _resetCurrentUserGameIfMissing(
+    List<_InvitedPlayer> players, {
+    required String idPartida,
+  }) async {
+    if (players.isEmpty || _playersContainCurrentUser(players)) {
+      return false;
+    }
+
+    debugPrint(
+      'Usuario actual ${widget.idUsuario} no encontrado en '
+      'obtenerJugadoresPartida($idPartida); se genera idPartida.',
+    );
+    await _resetCurrentUserInvitationGame(previousIdPartida: idPartida);
+    return true;
+  }
+
+  void _openScorecardForPlayers({
+    required String idPartida,
+    required List<_InvitedPlayer> players,
+  }) {
+    _stopPlayersRefreshPolling();
+    Navigator.of(context).pop(
+      _GameSession(
+        idPartida: idPartida,
+        idCampo: widget.fieldId,
+        jugadores: players.length.toString(),
+        playRowsJson: _createPlayRowsJsonForPlayers(players),
+      ),
+    );
   }
 
   Future<void> _confirmAndRemovePlayer(_InvitedPlayer player) async {
@@ -1580,7 +1739,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       }
 
       if (isCurrentUser) {
-        await _resetCurrentUserInvitationGame();
+        await _resetCurrentUserInvitationGame(previousIdPartida: idPartida);
       } else {
         await _refreshPlayers();
       }
@@ -1603,14 +1762,33 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     }
   }
 
-  Future<void> _resetCurrentUserInvitationGame() async {
-    final newIdPartida = widget.generateIdPartida();
+  Future<void> _resetCurrentUserInvitationGame({
+    String? previousIdPartida,
+  }) async {
+    final previousId = previousIdPartida?.trim() ?? '';
+    var newIdPartida = widget.generateIdPartida();
+    var attempt = 0;
+    while (attempt < 5 && newIdPartida == previousId) {
+      newIdPartida = widget.generateIdPartida();
+      attempt++;
+    }
+    if (newIdPartida == previousId && newIdPartida.isNotEmpty) {
+      final replacement = newIdPartida.endsWith('A') ? 'B' : 'A';
+      newIdPartida =
+          '${newIdPartida.substring(0, newIdPartida.length - 1)}$replacement';
+    }
+
     final createResponse = await widget.datosServidorService.creaPartida(
       widget.fieldId,
       newIdPartida,
-      '1',
     );
     debugPrint('creaPartida($newIdPartida) tras salir: $createResponse');
+    _setBackendDebugText(
+      _backendCallDisplayText('crea_partida', {
+        'idCampo': widget.fieldId,
+        'idPartida': newIdPartida,
+      }, createResponse),
+    );
     await widget.onInvitationGameCreated(newIdPartida);
     await widget.onInvitationAccepted(newIdPartida);
 
@@ -1622,8 +1800,60 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     setState(() {
       _idPartida = newIdPartida;
       _players = players;
+      _isLoading = false;
       _error = null;
     });
+  }
+
+  Future<void> _startGame() async {
+    final idPartida = _idPartida?.trim() ?? '';
+    if (idPartida.isEmpty || _players.isEmpty || _isStartingGame) {
+      return;
+    }
+
+    _stopPlayersRefreshPolling();
+    setState(() {
+      _isStartingGame = true;
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.empezarPartida(
+        idPartida,
+      );
+      debugPrint('empezarPartida($idPartida): $response');
+      _setBackendDebugText(
+        _backendCallDisplayText('empezar_partida', {
+          'idPartida': idPartida,
+        }, response),
+      );
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      _openScorecardForPlayers(idPartida: idPartida, players: _players);
+    } catch (error) {
+      debugPrint('empezarPartida fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = 'No se pudo empezar la partida.';
+        _backendDebugText = _backendErrorDisplayText(error);
+      });
+      _startPlayersRefreshPolling();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStartingGame = false;
+        });
+      }
+    }
   }
 
   String get _invitationQrData {
@@ -1633,6 +1863,16 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     }
 
     return '$idPartida,${widget.idUsuario.trim()}';
+  }
+
+  void _setBackendDebugText(String text) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _backendDebugText = text;
+    });
   }
 
   @override
@@ -1706,6 +1946,31 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         icon: const Icon(Icons.qr_code_scanner),
         label: const Text('Recibir la invitacion'),
       ),
+      if (_players.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        FilledButton.icon(
+          onPressed: _isStartingGame ? null : () => unawaited(_startGame()),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF8B3A34),
+            disabledBackgroundColor: const Color(0xFFC7A09C),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: _isStartingGame
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.sports_golf),
+          label: Text(_isStartingGame ? 'Empezando...' : 'Empezar la Partida'),
+        ),
+      ],
+      if (_backendDebugText != null) ...[
+        const SizedBox(height: 18),
+        _BackendResponsePanel(responseText: _backendDebugText!),
+      ],
     ];
   }
 
@@ -3499,13 +3764,72 @@ List<_AgendaSlot> _agendaSlotsFromResponse(String response) {
   return [for (final row in rows) ?_AgendaSlot.fromMap(row)];
 }
 
-List<_CreatedGameInfo> _createdGamesFromResponse(String response) {
-  final rows = _decodeMapRows(response, 0) ?? const [];
-  return [for (final row in rows) ?_CreatedGameInfo.fromMap(row)];
+List<_InvitedPlayer> _invitedPlayersFromResponse(String response) {
+  return _invitedPlayersFromPayload(response);
 }
 
-List<_InvitedPlayer> _invitedPlayersFromResponse(String response) {
-  final rows = _decodeMapRows(response, 0) ?? const [];
+_InitialGameState _initialGameStateFromResponse(String response) {
+  final decoded = _decodeJsonLikePayload(response.trim());
+  if (decoded is! Map) {
+    return const _InitialGameState();
+  }
+
+  return _InitialGameState.fromMap(_stringKeyedMap(decoded));
+}
+
+String _backendCallDisplayText(
+  String action,
+  Map<String, String> parameters,
+  String response,
+) {
+  final requestText = parameters.entries
+      .map((entry) => '${entry.key}: ${entry.value}')
+      .join('\n');
+  return 'accion: $action\n$requestText\n\n${_backendResponseDisplayText(response)}';
+}
+
+String _backendResponseDisplayText(String response) {
+  final trimmedResponse = response.trim();
+  if (trimmedResponse.isEmpty) {
+    return '(respuesta vacia)';
+  }
+
+  final decoded = _decodeJsonLikePayload(trimmedResponse);
+  if (decoded == null) {
+    return trimmedResponse;
+  }
+
+  return const JsonEncoder.withIndent('  ').convert(decoded);
+}
+
+String _backendErrorDisplayText(Object error) {
+  if (error case DatosServidorException()) {
+    final body = error.body.trim();
+    final details = body.isEmpty
+        ? '(sin cuerpo de respuesta)'
+        : _backendResponseDisplayText(body);
+    return 'HTTP ${error.statusCode}\n${error.uri}\n\n$details';
+  }
+
+  return '$error';
+}
+
+_InvitedPlayersResponse _invitedPlayersResponseFromResponse(String response) {
+  final decoded = _decodeJsonLikePayload(response.trim()) ?? response;
+  var empezada = '';
+  if (decoded is Map) {
+    final map = _stringKeyedMap(decoded);
+    empezada = '${map['empezada'] ?? ''}'.trim();
+  }
+
+  return _InvitedPlayersResponse(
+    empezada: empezada,
+    players: _invitedPlayersFromPayload(decoded),
+  );
+}
+
+List<_InvitedPlayer> _invitedPlayersFromPayload(Object? payload) {
+  final rows = _decodeMapRows(payload, 0) ?? const [];
   return [for (final row in rows) ?_InvitedPlayer.fromMap(row)];
 }
 
@@ -3810,10 +4134,13 @@ class _AgendaSlot {
   }
 }
 
-String _createEmptyPlayRowsJson() {
-  final data = List.generate(4, (rowIndex) {
+String _createPlayRowsJsonForPlayers(List<_InvitedPlayer> players) {
+  final data = List.generate(players.length, (rowIndex) {
+    final player = players[rowIndex];
     return <String, String>{
-      'jugador': '${rowIndex + 1}',
+      if (player.idJugador.trim().isNotEmpty)
+        'idUsuario': player.idJugador.trim(),
+      'jugador': player.displayName,
       'modificado': '',
       for (var holeIndex = 0; holeIndex < 18; holeIndex++)
         'hoyo_${holeIndex + 1}': '',
@@ -3828,10 +4155,9 @@ String? _mergeNewerPlayRowsJson({
   required String remoteResponse,
 }) {
   final currentRows =
-      _decodePlayRowsPayload(currentJson) ??
-      _decodePlayRowsPayload(_createEmptyPlayRowsJson());
+      _decodePlayRowsPayload(currentJson) ?? const <Map<String, dynamic>>[];
   final remoteRows = _decodePlayRowsPayload(remoteResponse);
-  if (currentRows == null || remoteRows == null) {
+  if (remoteRows == null) {
     return null;
   }
 
@@ -3844,11 +4170,16 @@ String? _mergeNewerPlayRowsJson({
   var hasChanges = false;
   final mergedRows = currentRows
       .map((row) => Map<String, dynamic>.from(row))
-      .toList(growable: false);
+      .toList(growable: true);
+  final mergedRowIds = <String>{
+    for (var index = 0; index < mergedRows.length; index++)
+      _playRowPlayerId(mergedRows[index], index),
+  };
 
   for (var index = 0; index < mergedRows.length; index++) {
     final currentRow = mergedRows[index];
-    final remoteRow = remoteRowsByPlayer[_playRowPlayerId(currentRow, index)];
+    final rowId = _playRowPlayerId(currentRow, index);
+    final remoteRow = remoteRowsByPlayer[rowId];
     if (remoteRow == null) {
       continue;
     }
@@ -3860,6 +4191,19 @@ String? _mergeNewerPlayRowsJson({
       mergedRows[index] = Map<String, dynamic>.from(remoteRow);
       hasChanges = true;
     }
+  }
+
+  for (var index = 0; index < remoteRows.length; index++) {
+    final remoteRow = remoteRows[index];
+    final rowId = _playRowPlayerId(remoteRow, index);
+    if (mergedRowIds.contains(rowId) ||
+        !_playRowHasPlayerOrAnnotations(remoteRow, index)) {
+      continue;
+    }
+
+    mergedRows.add(Map<String, dynamic>.from(remoteRow));
+    mergedRowIds.add(rowId);
+    hasChanges = true;
   }
 
   return hasChanges ? jsonEncode(mergedRows) : null;
@@ -3951,8 +4295,37 @@ Map<String, dynamic> _stringKeyedMap(Map<dynamic, dynamic> map) {
 }
 
 String _playRowPlayerId(Map<String, dynamic> row, int fallbackIndex) {
+  final idUsuario = row['idUsuario'] ?? row['idJugador'];
+  if (idUsuario != null && '$idUsuario'.trim().isNotEmpty) {
+    return '$idUsuario'.trim();
+  }
+
   final player = row['jugador'];
   return player == null ? '${fallbackIndex + 1}' : '$player';
+}
+
+bool _playRowHasPlayerOrAnnotations(
+  Map<String, dynamic> row,
+  int fallbackIndex,
+) {
+  final idUsuario = row['idUsuario'] ?? row['idJugador'];
+  if (idUsuario != null && '$idUsuario'.trim().isNotEmpty) {
+    return true;
+  }
+
+  final player = '${row['jugador'] ?? ''}'.trim();
+  if (player.isNotEmpty && player != '${fallbackIndex + 1}') {
+    return true;
+  }
+
+  for (var holeIndex = 0; holeIndex < 18; holeIndex++) {
+    final value = row['hoyo_${holeIndex + 1}'];
+    if (value != null && '$value'.trim().isNotEmpty) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 int _modifiedTimestampValue(Object? value) {
@@ -4029,7 +4402,8 @@ class _InvitedPlayer {
 
   static _InvitedPlayer? fromMap(Map<String, dynamic> map) {
     final idJugador = '${map['idJugador'] ?? map['idUsuario'] ?? ''}'.trim();
-    final alias = '${map['allias'] ?? map['alias'] ?? ''}'.trim();
+    final alias = '${map['allias'] ?? map['alias'] ?? map['Alias'] ?? ''}'
+        .trim();
     final esCreador = '${map['es_creador'] ?? ''}'.trim();
     if (idJugador.isEmpty && alias.isEmpty) {
       return null;
@@ -4043,39 +4417,40 @@ class _InvitedPlayer {
   }
 }
 
-class _CreatedGameInfo {
-  const _CreatedGameInfo({
-    required this.idPartida,
-    required this.esCreador,
-    required this.dia,
-    required this.hora,
-    required this.idUsuarioCreador,
-    required this.aliasCreador,
-    required this.movilCreador,
+class _InvitedPlayersResponse {
+  const _InvitedPlayersResponse({
+    required this.empezada,
+    required this.players,
   });
 
-  final String idPartida;
-  final String esCreador;
-  final String dia;
-  final String hora;
-  final String idUsuarioCreador;
-  final String aliasCreador;
-  final String movilCreador;
+  final String empezada;
+  final List<_InvitedPlayer> players;
 
-  static _CreatedGameInfo? fromMap(Map<String, dynamic> map) {
-    final idPartida = '${map['idPartida'] ?? ''}'.trim();
-    if (idPartida.isEmpty) {
-      return null;
+  bool get hasStarted => empezada.trim().isNotEmpty;
+}
+
+class _InitialGameState {
+  const _InitialGameState({this.empezada = '', this.ultimaModificacion = ''});
+
+  final String empezada;
+  final String ultimaModificacion;
+
+  bool get hasStarted => empezada.trim().isNotEmpty;
+
+  bool get hasModification => ultimaModificacion.trim().isNotEmpty;
+
+  String get startButtonLabel {
+    if (!hasStarted) {
+      return 'Iniciar Salida';
     }
 
-    return _CreatedGameInfo(
-      idPartida: idPartida,
-      esCreador: '${map['es_creador'] ?? ''}'.trim(),
-      dia: '${map['dia'] ?? ''}'.trim(),
-      hora: '${map['hora'] ?? ''}'.trim(),
-      idUsuarioCreador: '${map['idUsuarioCreador'] ?? ''}'.trim(),
-      aliasCreador: '${map['aliasCreador'] ?? ''}'.trim(),
-      movilCreador: '${map['movilCreador'] ?? ''}'.trim(),
+    return hasModification ? 'Continuar Partida' : 'Iniciar Partida';
+  }
+
+  static _InitialGameState fromMap(Map<String, dynamic> map) {
+    return _InitialGameState(
+      empezada: '${map['empezada'] ?? ''}'.trim(),
+      ultimaModificacion: '${map['ultima_modificacion'] ?? ''}'.trim(),
     );
   }
 }
