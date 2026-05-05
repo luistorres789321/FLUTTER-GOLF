@@ -51,6 +51,10 @@ class DatosServidorService {
     return _getTexto({'accion': 'empezar_partida', 'idPartida': idPartida});
   }
 
+  Future<String> destruyePartida(String idPartida) {
+    return _getTexto({'accion': 'destruye_partida', 'idPartida': idPartida});
+  }
+
   Future<String> obtenerJugadoresPartida(String idPartida) {
     return _getTexto({
       'accion': 'obtener_jugadores_partida',
@@ -81,6 +85,17 @@ class DatosServidorService {
   }) {
     return _getTexto({
       'accion': 'quita_jugador_partida',
+      'idPartida': idPartida,
+      'idUsuario': idUsuario,
+    });
+  }
+
+  Future<String> bajaJugadorPartida({
+    required String idPartida,
+    required String idUsuario,
+  }) {
+    return _getTexto({
+      'accion': 'baja_jugador_partida',
       'idPartida': idPartida,
       'idUsuario': idUsuario,
     });

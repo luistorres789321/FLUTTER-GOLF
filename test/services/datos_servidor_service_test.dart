@@ -98,6 +98,25 @@ void main() {
       });
     });
 
+    test('construye la query de destruyePartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.destruyePartida('ABC123XYZ9');
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'destruye_partida',
+        'idPartida': 'ABC123XYZ9',
+      });
+    });
+
     test('construye la query de anotaJsonHoyos', () async {
       late Uri requestedUri;
       const jsonHoyos = '[{"jugador":"1","hoyo_1":"4"}]';
@@ -186,6 +205,29 @@ void main() {
       expect(result, "{'rpta':'ok'}");
       expect(requestedUri.queryParameters, {
         'accion': 'quita_jugador_partida',
+        'idPartida': 'ABC123XYZ9',
+        'idUsuario': 'Z12345',
+      });
+    });
+
+    test('construye la query de bajaJugadorPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.bajaJugadorPartida(
+        idPartida: 'ABC123XYZ9',
+        idUsuario: 'Z12345',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'baja_jugador_partida',
         'idPartida': 'ABC123XYZ9',
         'idUsuario': 'Z12345',
       });

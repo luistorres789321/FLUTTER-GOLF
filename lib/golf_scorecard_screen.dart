@@ -46,6 +46,8 @@ class GolfScorecardScreen extends StatefulWidget {
     required this.jugadores,
     required this.initialPlayRowsJson,
     required this.onExit,
+    required this.onLeaveGame,
+    required this.onDestroyGame,
     this.differentRemotePlayRowsJson,
     this.datosServidorService,
     this.onPlayRowsJsonChanged,
@@ -76,6 +78,8 @@ class GolfScorecardScreen extends StatefulWidget {
   final DatosServidorService? datosServidorService;
   final ValueChanged<String>? onPlayRowsJsonChanged;
   final VoidCallback onExit;
+  final Future<void> Function() onLeaveGame;
+  final Future<void> Function() onDestroyGame;
 
   @override
   State<GolfScorecardScreen> createState() => _GolfScorecardScreenState();
@@ -90,6 +94,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late List<String> _playRowPlayerLabels;
   late List<String> _playRowModifiedValues;
   String? _loadError;
+  bool _isLeavingGame = false;
+  bool _isDestroyingGame = false;
 
   @override
   void initState() {
@@ -164,26 +170,94 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   }
 
   Future<void> _showLeaveGameConfirmation() async {
-    await _showScorecardConfirmationDialog(
+    final confirmed = await _showScorecardConfirmationDialog(
       message:
           'Seguro que te das de baja de la partida ? Si lo haces se acabará la partida para ti',
       confirmLabel: 'Si, dame de baja',
     );
+    if (confirmed != true || _isLeavingGame) {
+      return;
+    }
+
+    setState(() {
+      _isLeavingGame = true;
+      _loadError = null;
+    });
+
+    try {
+      await widget.onLeaveGame();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = null;
+      });
+    } catch (error) {
+      debugPrint('bajaJugadorPartida error: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = 'No se pudo dar de baja al jugador.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLeavingGame = false;
+        });
+      }
+    }
   }
 
   Future<void> _showDestroyCardConfirmation() async {
-    await _showScorecardConfirmationDialog(
+    final confirmed = await _showScorecardConfirmationDialog(
       message:
           'Seguro que destruyes la tarjeta ? Si lo haces se acabará la partida para todos los jugadores',
       confirmLabel: 'Si, destruyela',
     );
+    if (confirmed != true || _isDestroyingGame) {
+      return;
+    }
+
+    setState(() {
+      _isDestroyingGame = true;
+      _loadError = null;
+    });
+
+    try {
+      await widget.onDestroyGame();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = null;
+      });
+    } catch (error) {
+      debugPrint('destruyePartida error: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = 'No se pudo destruir la tarjeta.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDestroyingGame = false;
+        });
+      }
+    }
   }
 
-  Future<void> _showScorecardConfirmationDialog({
+  Future<bool?> _showScorecardConfirmationDialog({
     required String message,
     required String confirmLabel,
   }) async {
-    await showDialog<bool>(
+    return showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
@@ -240,6 +314,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canLeaveGame = _playRowValues.length > 1 && !_isLeavingGame;
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: DecoratedBox(
@@ -328,31 +404,34 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                       icon: const Icon(Icons.arrow_back),
                                       label: const Text('Salir'),
                                     ),
-                                    OutlinedButton.icon(
-                                      onPressed: _showLeaveGameConfirmation,
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: const Color(
-                                          0xFFF6F2EA,
+                                    if (canLeaveGame)
+                                      OutlinedButton.icon(
+                                        onPressed: _showLeaveGameConfirmation,
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: const Color(
+                                            0xFFF6F2EA,
+                                          ),
+                                          backgroundColor: const Color.fromRGBO(
+                                            107,
+                                            67,
+                                            45,
+                                            0.28,
+                                          ),
+                                          side: const BorderSide(
+                                            color: Color(0xFFF6F2EA),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 18,
+                                            vertical: 14,
+                                          ),
                                         ),
-                                        backgroundColor: const Color.fromRGBO(
-                                          107,
-                                          67,
-                                          45,
-                                          0.28,
-                                        ),
-                                        side: const BorderSide(
-                                          color: Color(0xFFF6F2EA),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 18,
-                                          vertical: 14,
-                                        ),
+                                        icon: const Icon(Icons.person_remove),
+                                        label: const Text('Darme de baja'),
                                       ),
-                                      icon: const Icon(Icons.person_remove),
-                                      label: const Text('Darme de baja'),
-                                    ),
                                     OutlinedButton.icon(
-                                      onPressed: _showDestroyCardConfirmation,
+                                      onPressed: _isDestroyingGame
+                                          ? null
+                                          : _showDestroyCardConfirmation,
                                       style: OutlinedButton.styleFrom(
                                         foregroundColor: const Color(
                                           0xFFF6F2EA,

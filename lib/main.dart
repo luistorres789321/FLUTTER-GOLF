@@ -453,8 +453,9 @@ class _GolfAppHomeState extends State<GolfAppHome> {
       return;
     }
 
+    String? playRowsResponse;
     try {
-      final respuesta = await _datosServidorService.obtenerJsonHoyos(
+      playRowsResponse = await _datosServidorService.obtenerJsonHoyos(
         session.idCampo,
         session.idPartida,
       );
@@ -463,9 +464,26 @@ class _GolfAppHomeState extends State<GolfAppHome> {
         return;
       }
 
-      await _applyRemotePlayRowsJson(session, respuesta);
+      await _applyRemotePlayRowsJson(session, playRowsResponse);
     } catch (error) {
       debugPrint('obtenerJsonHoyos error: $error');
+    }
+
+    try {
+      final playersResponse = await _datosServidorService
+          .obtenerJugadoresPartida(session.idPartida);
+
+      if (!mounted || generation != _jsonHoyosPollingGeneration) {
+        return;
+      }
+
+      await _applyRemotePlayers(
+        session,
+        playersResponse,
+        remotePlayRowsResponse: playRowsResponse,
+      );
+    } catch (error) {
+      debugPrint('obtenerJugadoresPartida polling error: $error');
     }
 
     if (!mounted || generation != _jsonHoyosPollingGeneration) {
@@ -505,6 +523,224 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     }
 
     await _savePlayRowsJsonLocally(session, mergedJson);
+  }
+
+  Future<void> _applyRemotePlayers(
+    _GameSession requestedSession,
+    String rawPlayersResponse, {
+    String? remotePlayRowsResponse,
+  }) async {
+    final players = _invitedPlayersFromResponse(rawPlayersResponse);
+    final session = _activeSession;
+    if (session == null ||
+        session.idCampo != requestedSession.idCampo ||
+        session.idPartida != requestedSession.idPartida) {
+      return;
+    }
+
+    final idUsuario = _userInformation?.idUsuario.trim() ?? '';
+    final currentUserIsMissing =
+        idUsuario.isNotEmpty &&
+        !players.any((player) => player.idJugador.trim() == idUsuario);
+    if (currentUserIsMissing) {
+      debugPrint(
+        'Usuario actual $idUsuario no encontrado en '
+        'obtenerJugadoresPartida(${session.idPartida}); se cambia idPartida.',
+      );
+      await _replaceCurrentLocalGameId(
+        requestedSession,
+        reason: 'jugador ausente',
+      );
+      return;
+    }
+
+    if (players.isEmpty) {
+      return;
+    }
+
+    final mergedPlayRowsJson = remotePlayRowsResponse == null
+        ? session.playRowsJson
+        : _mergeNewerPlayRowsJson(
+                currentJson: session.playRowsJson,
+                remoteResponse: remotePlayRowsResponse,
+              ) ??
+              session.playRowsJson;
+    final existingRows =
+        _decodePlayRowsPayload(mergedPlayRowsJson) ??
+        _decodePlayRowsPayload(session.playRowsJson) ??
+        const <Map<String, dynamic>>[];
+    final refreshedSession = _GameSession(
+      idPartida: session.idPartida,
+      idCampo: session.idCampo,
+      jugadores: players.length.toString(),
+      playRowsJson: _createPlayRowsJsonForPlayers(
+        players,
+        existingRows: existingRows,
+      ),
+    );
+
+    if (refreshedSession.jugadores == session.jugadores &&
+        refreshedSession.playRowsJson == session.playRowsJson) {
+      return;
+    }
+
+    await _saveSessionLocallyIfCurrent(requestedSession, refreshedSession);
+    _setDifferentRemotePlayRowsJson(null);
+  }
+
+  Future<void> _leaveCurrentUserGame() async {
+    final session = _activeSession;
+    final idUsuario = _userInformation?.idUsuario.trim() ?? '';
+    if (session == null || idUsuario.isEmpty) {
+      throw StateError('No se pudo identificar la partida o el usuario.');
+    }
+
+    final response = await _datosServidorService.bajaJugadorPartida(
+      idPartida: session.idPartida,
+      idUsuario: idUsuario,
+    );
+    debugPrint(
+      'bajaJugadorPartida(${session.idPartida}, $idUsuario): $response',
+    );
+    if (!_backendResponseIsOk(response)) {
+      throw FormatException('Respuesta no valida: $response');
+    }
+
+    await _replaceCurrentLocalGameId(session, reason: 'baja');
+  }
+
+  Future<void> _replaceCurrentLocalGameId(
+    _GameSession requestedSession, {
+    required String reason,
+  }) async {
+    if (!_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    _stopJsonHoyosPolling();
+    final newIdPartida = _generateReplacementGameId(requestedSession.idPartida);
+    try {
+      final createResponse = await _datosServidorService.creaPartida(
+        requestedSession.idCampo,
+        newIdPartida,
+      );
+      debugPrint('creaPartida($newIdPartida) tras $reason: $createResponse');
+    } catch (error) {
+      debugPrint('creaPartida($newIdPartida) tras $reason fallo: $error');
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    if (!_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    await prefs.setString(_savedGameIdKey, newIdPartida);
+    await prefs.setString(_savedFieldIdKey, requestedSession.idCampo);
+    await prefs.remove(_savedPlayersKey);
+    await prefs.remove(_savedGameRowsKey);
+    await prefs.setString(_invitationGameIdKey, newIdPartida);
+    await prefs.setInt(
+      _invitationGameCreatedAtKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+
+    if (!mounted || !_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    setState(() {
+      _savedGameId = newIdPartida;
+      _savedFieldId = requestedSession.idCampo;
+      _activeSession = null;
+      _differentRemotePlayRowsJson = null;
+      _creationError = null;
+      _initialGameState = const _InitialGameState();
+    });
+
+    final idUsuario = _userInformation?.idUsuario;
+    if (_isUserRegistered && idUsuario != null && idUsuario.isNotEmpty) {
+      unawaited(_loadInitialGameState(idUsuario));
+    }
+  }
+
+  Future<void> _destroyCurrentGame() async {
+    final session = _activeSession;
+    if (session == null) {
+      throw StateError('No se pudo identificar la partida.');
+    }
+
+    final response = await _datosServidorService.destruyePartida(
+      session.idPartida,
+    );
+    debugPrint('destruyePartida(${session.idPartida}): $response');
+    if (!_backendResponseIsOk(response)) {
+      throw FormatException('Respuesta no valida: $response');
+    }
+
+    await _clearDestroyedSession(session);
+  }
+
+  Future<void> _clearDestroyedSession(_GameSession requestedSession) async {
+    if (!_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    _stopJsonHoyosPolling();
+    final prefs = await SharedPreferences.getInstance();
+    if (!_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    await prefs.remove(_savedGameIdKey);
+    await prefs.remove(_savedPlayersKey);
+    await prefs.remove(_savedGameRowsKey);
+    await _clearInvitationGameId(prefs);
+
+    if (!mounted || !_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    setState(() {
+      _savedGameId = null;
+      _activeSession = null;
+      _differentRemotePlayRowsJson = null;
+      _creationError = null;
+      _initialGameState = const _InitialGameState();
+    });
+
+    final idUsuario = _userInformation?.idUsuario;
+    if (_isUserRegistered && idUsuario != null && idUsuario.isNotEmpty) {
+      unawaited(_loadInitialGameState(idUsuario));
+    }
+  }
+
+  Future<void> _saveSessionLocallyIfCurrent(
+    _GameSession requestedSession,
+    _GameSession refreshedSession,
+  ) async {
+    if (!_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    if (!_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    await prefs.setString(_savedGameIdKey, refreshedSession.idPartida);
+    await prefs.setString(_savedFieldIdKey, refreshedSession.idCampo);
+    await prefs.setString(_savedPlayersKey, refreshedSession.jugadores);
+    await prefs.setString(_savedGameRowsKey, refreshedSession.playRowsJson);
+
+    if (!mounted || !_isCurrentSession(requestedSession)) {
+      return;
+    }
+
+    setState(() {
+      _savedGameId = refreshedSession.idPartida;
+      _savedFieldId = refreshedSession.idCampo;
+      _activeSession = refreshedSession;
+    });
   }
 
   void _setDifferentRemotePlayRowsJson(String? playRowsJson) {
@@ -551,6 +787,8 @@ class _GolfAppHomeState extends State<GolfAppHome> {
         differentRemotePlayRowsJson: _differentRemotePlayRowsJson,
         datosServidorService: _datosServidorService,
         onPlayRowsJsonChanged: _savePlayRowsJson,
+        onLeaveGame: _leaveCurrentUserGame,
+        onDestroyGame: _destroyCurrentGame,
         onExit: _exitActiveSession,
       );
     }
@@ -763,6 +1001,23 @@ class _GolfAppHomeState extends State<GolfAppHome> {
     final random = Random.secure();
     return List.generate(10, (_) => chars[random.nextInt(chars.length)]).join();
   }
+
+  String _generateReplacementGameId(String previousIdPartida) {
+    final previousId = previousIdPartida.trim();
+    var newIdPartida = _generateGameId();
+    var attempt = 0;
+    while (attempt < 5 && newIdPartida == previousId) {
+      newIdPartida = _generateGameId();
+      attempt++;
+    }
+
+    if (newIdPartida == previousId && previousId.isNotEmpty) {
+      final replacement = previousId.endsWith('A') ? 'B' : 'A';
+      return '${previousId.substring(0, previousId.length - 1)}$replacement';
+    }
+
+    return newIdPartida;
+  }
 }
 
 const _userInformationFields = [
@@ -834,53 +1089,6 @@ class _GolfLogo extends StatelessWidget {
         fit: BoxFit.contain,
         semanticLabel: 'Logo golf',
       ),
-    );
-  }
-}
-
-class _BackendResponsePanel extends StatelessWidget {
-  const _BackendResponsePanel({required this.responseText});
-
-  final String responseText;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Respuesta backend',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF545B66),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          constraints: const BoxConstraints(maxHeight: 220),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF10261D),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0x33545B66)),
-          ),
-          child: SingleChildScrollView(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SelectableText(
-                responseText,
-                style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  fontFamily: 'monospace',
-                  color: Color(0xFFF6F2EA),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1408,7 +1616,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
   final Set<String> _deletingPlayerIds = <String>{};
   String? _idPartida;
   String? _error;
-  String? _backendDebugText;
   List<_InvitedPlayer> _players = const [];
 
   @override
@@ -1427,7 +1634,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     setState(() {
       _isLoading = true;
       _error = null;
-      _backendDebugText = null;
     });
 
     try {
@@ -1446,12 +1652,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
           widget.fieldId,
           idPartida,
         );
-        _setBackendDebugText(
-          _backendCallDisplayText('crea_partida', {
-            'idCampo': widget.fieldId,
-            'idPartida': idPartida,
-          }, createResponse),
-        );
+        debugPrint('creaPartida($idPartida): $createResponse');
         await widget.onInvitationGameCreated(idPartida);
       }
 
@@ -1484,7 +1685,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       setState(() {
         _isLoading = false;
         _error = 'No se pudo preparar la invitacion de jugadores.';
-        _backendDebugText = _backendErrorDisplayText(error);
       });
     }
   }
@@ -1496,11 +1696,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       idPartida,
     );
     debugPrint('obtenerJugadoresPartida($idPartida): $response');
-    _setBackendDebugText(
-      _backendCallDisplayText('obtener_jugadores_partida', {
-        'idPartida': idPartida,
-      }, response),
-    );
     return _invitedPlayersResponseFromResponse(response);
   }
 
@@ -1572,7 +1767,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
 
       setState(() {
         _error = 'No se pudo actualizar la lista de jugadores.';
-        _backendDebugText = _backendErrorDisplayText(error);
       });
     } finally {
       if (pollingGeneration != null &&
@@ -1783,12 +1977,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       newIdPartida,
     );
     debugPrint('creaPartida($newIdPartida) tras salir: $createResponse');
-    _setBackendDebugText(
-      _backendCallDisplayText('crea_partida', {
-        'idCampo': widget.fieldId,
-        'idPartida': newIdPartida,
-      }, createResponse),
-    );
     await widget.onInvitationGameCreated(newIdPartida);
     await widget.onInvitationAccepted(newIdPartida);
 
@@ -1822,11 +2010,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         idPartida,
       );
       debugPrint('empezarPartida($idPartida): $response');
-      _setBackendDebugText(
-        _backendCallDisplayText('empezar_partida', {
-          'idPartida': idPartida,
-        }, response),
-      );
       if (!_backendResponseIsOk(response)) {
         throw FormatException('Respuesta no valida: $response');
       }
@@ -1838,13 +2021,16 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       _openScorecardForPlayers(idPartida: idPartida, players: _players);
     } catch (error) {
       debugPrint('empezarPartida fallo: $error');
+      if (await _openScorecardIfGameStarted(idPartida)) {
+        return;
+      }
+
       if (!mounted) {
         return;
       }
 
       setState(() {
         _error = 'No se pudo empezar la partida.';
-        _backendDebugText = _backendErrorDisplayText(error);
       });
       _startPlayersRefreshPolling();
     } finally {
@@ -1856,6 +2042,28 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     }
   }
 
+  Future<bool> _openScorecardIfGameStarted(String idPartida) async {
+    try {
+      final playersResponse = await _fetchPlayersResponse(idPartida);
+      if (!mounted) {
+        return true;
+      }
+
+      if (!playersResponse.hasStarted) {
+        return false;
+      }
+
+      _openScorecardForPlayers(
+        idPartida: idPartida,
+        players: playersResponse.players,
+      );
+      return true;
+    } catch (error) {
+      debugPrint('comprobar partida empezada fallo: $error');
+      return false;
+    }
+  }
+
   String get _invitationQrData {
     final idPartida = _idPartida?.trim() ?? '';
     if (idPartida.isEmpty) {
@@ -1863,16 +2071,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     }
 
     return '$idPartida,${widget.idUsuario.trim()}';
-  }
-
-  void _setBackendDebugText(String text) {
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _backendDebugText = text;
-    });
   }
 
   @override
@@ -1966,10 +2164,6 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
               : const Icon(Icons.sports_golf),
           label: Text(_isStartingGame ? 'Empezando...' : 'Empezar la Partida'),
         ),
-      ],
-      if (_backendDebugText != null) ...[
-        const SizedBox(height: 18),
-        _BackendResponsePanel(responseText: _backendDebugText!),
       ],
     ];
   }
@@ -3777,43 +3971,6 @@ _InitialGameState _initialGameStateFromResponse(String response) {
   return _InitialGameState.fromMap(_stringKeyedMap(decoded));
 }
 
-String _backendCallDisplayText(
-  String action,
-  Map<String, String> parameters,
-  String response,
-) {
-  final requestText = parameters.entries
-      .map((entry) => '${entry.key}: ${entry.value}')
-      .join('\n');
-  return 'accion: $action\n$requestText\n\n${_backendResponseDisplayText(response)}';
-}
-
-String _backendResponseDisplayText(String response) {
-  final trimmedResponse = response.trim();
-  if (trimmedResponse.isEmpty) {
-    return '(respuesta vacia)';
-  }
-
-  final decoded = _decodeJsonLikePayload(trimmedResponse);
-  if (decoded == null) {
-    return trimmedResponse;
-  }
-
-  return const JsonEncoder.withIndent('  ').convert(decoded);
-}
-
-String _backendErrorDisplayText(Object error) {
-  if (error case DatosServidorException()) {
-    final body = error.body.trim();
-    final details = body.isEmpty
-        ? '(sin cuerpo de respuesta)'
-        : _backendResponseDisplayText(body);
-    return 'HTTP ${error.statusCode}\n${error.uri}\n\n$details';
-  }
-
-  return '$error';
-}
-
 _InvitedPlayersResponse _invitedPlayersResponseFromResponse(String response) {
   final decoded = _decodeJsonLikePayload(response.trim()) ?? response;
   var empezada = '';
@@ -4134,16 +4291,38 @@ class _AgendaSlot {
   }
 }
 
-String _createPlayRowsJsonForPlayers(List<_InvitedPlayer> players) {
+String _createPlayRowsJsonForPlayers(
+  List<_InvitedPlayer> players, {
+  List<Map<String, dynamic>> existingRows = const [],
+}) {
+  final existingRowsByPlayerId = <String, Map<String, dynamic>>{};
+  final existingRowsByPlayerLabel = <String, Map<String, dynamic>>{};
+  for (var index = 0; index < existingRows.length; index++) {
+    final row = existingRows[index];
+    final idUsuario = '${row['idUsuario'] ?? row['idJugador'] ?? ''}'.trim();
+    if (idUsuario.isNotEmpty) {
+      existingRowsByPlayerId[idUsuario] = row;
+    }
+
+    final playerLabel = '${row['jugador'] ?? ''}'.trim();
+    if (playerLabel.isNotEmpty && playerLabel != '${index + 1}') {
+      existingRowsByPlayerLabel[playerLabel] = row;
+    }
+  }
+
   final data = List.generate(players.length, (rowIndex) {
     final player = players[rowIndex];
+    final existingRow =
+        existingRowsByPlayerId[player.idJugador.trim()] ??
+        existingRowsByPlayerLabel[player.displayName];
     return <String, String>{
       if (player.idJugador.trim().isNotEmpty)
         'idUsuario': player.idJugador.trim(),
       'jugador': player.displayName,
-      'modificado': '',
+      'modificado': '${existingRow?['modificado'] ?? ''}',
       for (var holeIndex = 0; holeIndex < 18; holeIndex++)
-        'hoyo_${holeIndex + 1}': '',
+        'hoyo_${holeIndex + 1}':
+            '${existingRow?['hoyo_${holeIndex + 1}'] ?? ''}',
     };
   });
 
