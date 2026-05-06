@@ -1374,6 +1374,10 @@ DatosServidorService _existingFieldsService({
         return http.Response("{'rpta':'ok'}", 200);
       }
 
+      if (accion == 'transmite_posicion_golf') {
+        return http.Response('{"rpta":"ok"}', 200);
+      }
+
       if (accion == 'baja_jugador_partida') {
         return http.Response('{"rpta":"ok"}', 200);
       }

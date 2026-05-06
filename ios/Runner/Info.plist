@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>La camara se usa para escanear invitaciones de salida.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>La ubicacion se usa para compartir la posicion del jugador durante la partida.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

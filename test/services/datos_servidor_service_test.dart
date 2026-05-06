@@ -260,6 +260,35 @@ void main() {
       });
     });
 
+    test('construye la query de transmitePosicionGolf', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.transmitePosicionGolf(
+        idUsuario: 'Z12345',
+        lat: '41.3902050',
+        lon: '2.1540070',
+        fecha: '260505112233',
+        precision: '7.5',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'transmite_posicion_golf',
+        'idUsuario': 'Z12345',
+        'lat': '41.3902050',
+        'lon': '2.1540070',
+        'fecha': '260505112233',
+        'precision': '7.5',
+      });
+    });
+
     test('construye la query de altaUsuario', () async {
       late Uri requestedUri;
 

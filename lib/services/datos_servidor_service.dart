@@ -116,6 +116,23 @@ class DatosServidorService {
     });
   }
 
+  Future<String> transmitePosicionGolf({
+    required String idUsuario,
+    required String lat,
+    required String lon,
+    required String fecha,
+    required String precision,
+  }) {
+    return _getTexto({
+      'accion': 'transmite_posicion_golf',
+      'idUsuario': idUsuario,
+      'lat': lat,
+      'lon': lon,
+      'fecha': fecha,
+      'precision': precision,
+    });
+  }
+
   Future<String> yaExisteAlias(String alias) {
     return _getTexto({'accion': 'ya_existe_alias', 'alias': alias});
   }

@@ -1,30 +1,43 @@
 PODS:
   - Flutter (1.0.0)
+  - geolocator_apple (1.2.0):
+    - Flutter
+    - FlutterMacOS
   - mobile_scanner (7.0.0):
     - Flutter
     - FlutterMacOS
+  - package_info_plus (0.4.5):
+    - Flutter
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
   - mobile_scanner (from `.symlinks/plugins/mobile_scanner/darwin`)
+  - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  geolocator_apple:
+    :path: ".symlinks/plugins/geolocator_apple/darwin"
   mobile_scanner:
     :path: ".symlinks/plugins/mobile_scanner/darwin"
+  package_info_plus:
+    :path: ".symlinks/plugins/package_info_plus/ios"
   shared_preferences_foundation:
     :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  geolocator_apple: 66b711889fd333205763b83c9dcf0a57a28c7afd
   mobile_scanner: 77265f3dc8d580810e91849d4a0811a90467ed5e
+  package_info_plus: c0502532a26c7662a62a356cebe2692ec5fe4ec4
   shared_preferences_foundation: 5086985c1d43c5ba4d5e69a4e8083a389e2909e6
 
-PODFILE CHECKSUM: 35a2496d953b78d5fb37339ae9ffb08c120bebdc
+PODFILE CHECKSUM: 6b490a3118234c414961371b37098f063ede4afe
 
 COCOAPODS: 1.16.2

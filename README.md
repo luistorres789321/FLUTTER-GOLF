@@ -36,5 +36,5 @@ flutter run -d ios
 ## Estado del proyecto
 
 - La app abre por defecto en la pantalla de tarjeta de golf
-- Ya no depende de `geolocator`
+- Usa `geolocator` para transmitir la posicion del jugador en primer plano
 - El proyecto de iOS incluye `Podfile` para que `pod install` funcione bien en macOS

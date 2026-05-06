@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -52,7 +53,7 @@ class GolfAppHome extends StatefulWidget {
   State<GolfAppHome> createState() => _GolfAppHomeState();
 }
 
-class _GolfAppHomeState extends State<GolfAppHome> {
+class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   static const _savedUserInformationKey = 'saved_user_information_json';
   static const _savedUserRegisteredKey = 'saved_user_registered';
   static const _userRegistrationRequiredMessage =
@@ -65,12 +66,16 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   static const _invitationGameCreatedAtKey = 'invitation_game_created_at';
   static const _defaultFieldId = '1';
   static const _jsonHoyosPollDelay = Duration(seconds: 5);
+  static const _positionTransmissionDelay = Duration(seconds: 20);
   static const _invitationGameLifetime = Duration(hours: 2);
 
   late final DatosServidorService _datosServidorService;
   late final bool _ownsDatosServidorService;
   int _jsonHoyosPollingGeneration = 0;
   Timer? _jsonHoyosPollingTimer;
+  Timer? _positionTransmissionTimer;
+  bool _isAppVisible = true;
+  bool _isTransmittingPosition = false;
   bool _isLoading = true;
   String? _savedGameId;
   String _savedFieldId = _defaultFieldId;
@@ -87,6 +92,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ownsDatosServidorService = widget.datosServidorService == null;
     _datosServidorService =
         widget.datosServidorService ?? DatosServidorService();
@@ -95,11 +101,23 @@ class _GolfAppHomeState extends State<GolfAppHome> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopJsonHoyosPolling();
+    _stopPositionTransmission();
     if (_ownsDatosServidorService) {
       _datosServidorService.close();
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppVisible = state == AppLifecycleState.resumed;
+    if (_isAppVisible) {
+      _startPositionTransmissionIfNeeded();
+    } else {
+      _stopPositionTransmission();
+    }
   }
 
   Future<void> _loadSavedGame() async {
@@ -131,6 +149,7 @@ class _GolfAppHomeState extends State<GolfAppHome> {
 
     if (isUserRegistered && userInformation.idUsuario.isNotEmpty) {
       unawaited(_loadInitialGameState(userInformation.idUsuario));
+      _startPositionTransmissionIfNeeded();
     }
   }
 
@@ -213,6 +232,9 @@ class _GolfAppHomeState extends State<GolfAppHome> {
 
     if (isRegistered && savedInformation.idUsuario.isNotEmpty) {
       unawaited(_loadInitialGameState(savedInformation.idUsuario));
+      _startPositionTransmissionIfNeeded();
+    } else {
+      _stopPositionTransmission();
     }
   }
 
@@ -231,6 +253,87 @@ class _GolfAppHomeState extends State<GolfAppHome> {
       });
     } catch (error) {
       debugPrint('obtener estado inicial fallo: $error');
+    }
+  }
+
+  String get _positionTransmissionUserId {
+    if (!_isUserRegistered) {
+      return '';
+    }
+
+    return _userInformation?.idUsuario.trim() ?? '';
+  }
+
+  void _startPositionTransmissionIfNeeded() {
+    if (!_isAppVisible ||
+        _positionTransmissionTimer != null ||
+        _positionTransmissionUserId.isEmpty) {
+      return;
+    }
+
+    unawaited(_transmitCurrentPosition());
+    _positionTransmissionTimer = Timer.periodic(_positionTransmissionDelay, (
+      _,
+    ) {
+      unawaited(_transmitCurrentPosition());
+    });
+  }
+
+  void _stopPositionTransmission() {
+    _positionTransmissionTimer?.cancel();
+    _positionTransmissionTimer = null;
+  }
+
+  Future<void> _transmitCurrentPosition() async {
+    final idUsuario = _positionTransmissionUserId;
+    if (!_isAppVisible || idUsuario.isEmpty || _isTransmittingPosition) {
+      return;
+    }
+
+    _isTransmittingPosition = true;
+    try {
+      final position = await _currentGolfPositionPayload();
+      await _datosServidorService.transmitePosicionGolf(
+        idUsuario: idUsuario,
+        lat: position.lat,
+        lon: position.lon,
+        fecha: position.fecha,
+        precision: position.precision,
+      );
+    } catch (error) {
+      debugPrint('transmitePosicionGolf fallo: $error');
+    } finally {
+      _isTransmittingPosition = false;
+    }
+  }
+
+  Future<_GolfPositionPayload> _currentGolfPositionPayload() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return _GolfPositionPayload.unavailable(DateTime.now());
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return _GolfPositionPayload.unavailable(DateTime.now());
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      return _GolfPositionPayload.fromPosition(position);
+    } catch (error) {
+      debugPrint('obtener posicion fallo: $error');
+      return _GolfPositionPayload.unavailable(DateTime.now());
     }
   }
 
@@ -3949,6 +4052,16 @@ String _formatDisplayDate(DateTime day) {
   return '${_twoDigits(day.day)}/${_twoDigits(day.month)}/${day.year}';
 }
 
+String _formatGolfPositionDate(DateTime value) {
+  final localValue = value.toLocal();
+  return '${_twoDigits(localValue.year % 100)}'
+      '${_twoDigits(localValue.month)}'
+      '${_twoDigits(localValue.day)}'
+      '${_twoDigits(localValue.hour)}'
+      '${_twoDigits(localValue.minute)}'
+      '${_twoDigits(localValue.second)}';
+}
+
 String _twoDigits(int value) {
   return value.toString().padLeft(2, '0');
 }
@@ -4289,6 +4402,38 @@ class _AgendaSlot {
   String get label {
     return idPartida.isEmpty ? formattedRange : '$formattedRange · $idPartida';
   }
+}
+
+class _GolfPositionPayload {
+  const _GolfPositionPayload({
+    required this.lat,
+    required this.lon,
+    required this.fecha,
+    required this.precision,
+  });
+
+  factory _GolfPositionPayload.fromPosition(Position position) {
+    return _GolfPositionPayload(
+      lat: position.latitude.toStringAsFixed(7),
+      lon: position.longitude.toStringAsFixed(7),
+      fecha: _formatGolfPositionDate(position.timestamp),
+      precision: position.accuracy.toStringAsFixed(1),
+    );
+  }
+
+  factory _GolfPositionPayload.unavailable(DateTime fecha) {
+    return _GolfPositionPayload(
+      lat: '0',
+      lon: '0',
+      fecha: _formatGolfPositionDate(fecha),
+      precision: '0',
+    );
+  }
+
+  final String lat;
+  final String lon;
+  final String fecha;
+  final String precision;
 }
 
 String _createPlayRowsJsonForPlayers(
