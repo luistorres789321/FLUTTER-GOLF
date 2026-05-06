@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_golf/golf_scorecard_screen.dart';
 import 'package:flutter_golf/main.dart';
 import 'package:flutter_golf/services/datos_servidor_service.dart';
 import 'package:http/http.dart' as http;
@@ -91,7 +92,7 @@ void main() {
       GolfScorecardApp(
         datosServidorService: _existingFieldsService(
           initialStateResponse:
-              "{'empezada':'260503123400','ultima_modificacion':''}",
+              "{'empezada':'${_backendTimestampForToday()}','ultima_modificacion':''}",
         ),
       ),
     );
@@ -115,7 +116,7 @@ void main() {
       GolfScorecardApp(
         datosServidorService: _existingFieldsService(
           initialStateResponse:
-              "{'empezada':'260503123400','ultima_modificacion':'260503124400'}",
+              "{'empezada':'${_backendTimestampForToday()}','ultima_modificacion':'${_backendTimestampForToday(minute: 44)}'}",
         ),
       ),
     );
@@ -311,6 +312,72 @@ void main() {
     },
   );
 
+  testWidgets('renews saved game when started game is from a previous day', (
+    WidgetTester tester,
+  ) async {
+    const oldIdPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': oldIdPartida,
+      'saved_players': '2',
+      'saved_game_rows_json': 'old rows',
+      'invitation_game_id': oldIdPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          playersResponseForGame: (idPartida) {
+            if (idPartida == oldIdPartida) {
+              return "{'empezada':'${_backendTimestampForYesterday()}','jugadores':["
+                  "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                  "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+            }
+
+            return '[]';
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsNothing);
+    expect(find.text('Sin jugadores'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'Invitar a jugadores'),
+      findsOneWidget,
+    );
+
+    final createdIds = requests
+        .where((uri) => uri.queryParameters['accion'] == 'crea_partida')
+        .map((uri) => uri.queryParameters['idPartida'])
+        .toList();
+    expect(createdIds, hasLength(1));
+    expect(createdIds.single, isNot(oldIdPartida));
+
+    final playerRequestIds = requests
+        .where(
+          (uri) => uri.queryParameters['accion'] == 'obtener_jugadores_partida',
+        )
+        .map((uri) => uri.queryParameters['idPartida'])
+        .toList();
+    expect(playerRequestIds, contains(oldIdPartida));
+    expect(playerRequestIds, contains(createdIds.single));
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('saved_game_id'), createdIds.single);
+    expect(prefs.getString('invitation_game_id'), createdIds.single);
+    expect(prefs.getString('saved_players'), isNull);
+    expect(prefs.getString('saved_game_rows_json'), isNull);
+  });
+
   testWidgets('starts player game and opens scorecard', (
     WidgetTester tester,
   ) async {
@@ -357,7 +424,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.widgetWithText(OutlinedButton, 'Destruir Tarjeta'),
+      find.widgetWithText(OutlinedButton, 'Destruir tarjeta'),
       findsOneWidget,
     );
     expect(find.text('Auto'), findsOneWidget);
@@ -385,7 +452,7 @@ void main() {
 
     expect(find.text('Cancelar accion'), findsNothing);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Destruir Tarjeta'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Destruir tarjeta'));
     await tester.pumpAndSettle();
 
     expect(
@@ -401,6 +468,107 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Cancelar accion'), findsNothing);
+  });
+
+  testWidgets('shows front nine subtotal for each scorecard player row', (
+    WidgetTester tester,
+  ) async {
+    String playRowJson(String player, List<String> values) {
+      return jsonEncode({
+        'idUsuario': player == 'Auto' ? '123' : '999',
+        'jugador': player,
+        'modificado': '',
+        for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+          'hoyo_${holeIndex + 1}': holeIndex < values.length
+              ? values[holeIndex]
+              : '',
+      });
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '2',
+          initialPlayRowsJson:
+              '[${playRowJson('Auto', ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18'])},${playRowJson('Luis', ['4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4'])}]',
+          datosServidorService: _existingFieldsService(
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_horizontalScrollAncestorOfButton('Salir'), findsNothing);
+    expect(find.textContaining('"hoyo_1"'), findsNothing);
+    expect(find.text('45'), findsOneWidget);
+    expect(find.text('36'), findsNWidgets(2));
+    expect(find.text('126'), findsOneWidget);
+    expect(find.text('171'), findsOneWidget);
+    expect(find.text('72'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).first, '5');
+    await tester.pump();
+
+    expect(find.text('45'), findsNothing);
+    expect(find.text('49'), findsOneWidget);
+    expect(find.text('171'), findsNothing);
+    expect(find.text('175'), findsOneWidget);
+    expect(find.text('126'), findsOneWidget);
+    expect(find.text('36'), findsNWidgets(2));
+    expect(find.text('72'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).first, '123');
+    await tester.pump();
+
+    final firstScoreField = tester.widget<TextField>(
+      find.byType(TextField).first,
+    );
+    expect(firstScoreField.controller?.text, '12');
+
+    expect(
+      _containerColorCount(tester, const Color(0xFFE1F3DA)),
+      greaterThan(0),
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFFFF1BF)),
+      greaterThan(0),
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFDCEEFF)),
+      greaterThan(0),
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFBFD9F2)),
+      greaterThan(0),
+    );
+
+    await tester.tap(find.text('Auto'));
+    await tester.pump();
+
+    final unfocusedScoreField = tester.widget<TextField>(
+      find.byType(TextField).first,
+    );
+    expect(unfocusedScoreField.focusNode?.hasFocus, isFalse);
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    await tester.pump();
+
+    final focusedScoreField = tester.widget<TextField>(
+      find.byType(TextField).first,
+    );
+    expect(focusedScoreField.focusNode?.hasFocus, isTrue);
+    expect(
+      focusedScoreField.controller?.selection,
+      const TextSelection(baseOffset: 0, extentOffset: 2),
+    );
   });
 
   testWidgets(
@@ -426,7 +594,7 @@ void main() {
                 (uri) => uri.queryParameters['accion'] == 'empezar_partida',
               );
               if (startWasRequested) {
-                return "{'empezada':'260505110800','jugadores':["
+                return "{'empezada':'${_backendTimestampForToday(hour: 11, minute: 8)}','jugadores':["
                     "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
                     "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
               }
@@ -492,7 +660,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Destruir Tarjeta'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Destruir tarjeta'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(FilledButton, 'Si, destruyela'), findsOneWidget);
 
@@ -546,7 +714,7 @@ void main() {
     expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, 'Darme de baja'), findsNothing);
     expect(
-      find.widgetWithText(OutlinedButton, 'Destruir Tarjeta'),
+      find.widgetWithText(OutlinedButton, 'Destruir tarjeta'),
       findsOneWidget,
     );
     expect(find.text('Auto'), findsOneWidget);
@@ -815,7 +983,7 @@ void main() {
         datosServidorService: _existingFieldsService(
           requests: requests,
           playersResponseForGame: (_) {
-            return "{'empezada':'260503124300','jugadores':["
+            return "{'empezada':'${_backendTimestampForToday(hour: 12, minute: 43)}','jugadores':["
                 "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
                 "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
           },
@@ -1305,6 +1473,7 @@ DatosServidorService _existingFieldsService({
   int startGameStatusCode = 200,
   String Function(String? idPartida)? playersResponseForGame,
   String Function(String? idPartida)? playRowsResponseForGame,
+  String? scorecardConfigurationResponse,
 }) {
   final annotatedInvitationGames = <String>{};
 
@@ -1392,7 +1561,9 @@ DatosServidorService _existingFieldsService({
       if (accion == 'coje_configuracion_campos') {
         final parametro = request.url.queryParameters['parametro'];
         final value = switch (parametro) {
-          'configuracion_tarjeta' => jsonEncode({'rpta': 'ok', 'valor': '[]'}),
+          'configuracion_tarjeta' =>
+            scorecardConfigurationResponse ??
+                jsonEncode({'rpta': 'ok', 'valor': '[]'}),
           'lapsus_agenda' => '15',
           'agenda_desde' => '10:00',
           'agenda_hasta' => '11:00',
@@ -1425,6 +1596,65 @@ String _agendaDay(DateTime day) {
   return '${_twoDigits(day.year % 100)}'
       '${_twoDigits(day.month)}'
       '${_twoDigits(day.day)}';
+}
+
+String _backendTimestampForToday({int hour = 12, int minute = 34}) {
+  final now = DateTime.now();
+  return _backendTimestamp(
+    DateTime(now.year, now.month, now.day, hour, minute),
+  );
+}
+
+String _backendTimestampForYesterday() {
+  final yesterday = DateTime.now().subtract(const Duration(days: 1));
+  return _backendTimestamp(
+    DateTime(yesterday.year, yesterday.month, yesterday.day, 12, 34),
+  );
+}
+
+String _backendTimestamp(DateTime value) {
+  return '${_twoDigits(value.year % 100)}'
+      '${_twoDigits(value.month)}'
+      '${_twoDigits(value.day)}'
+      '${_twoDigits(value.hour)}'
+      '${_twoDigits(value.minute)}'
+      '${_twoDigits(value.second)}';
+}
+
+String _scorecardConfigurationResponse(List<int> handicapValues) {
+  final holes = List.generate(18, (index) {
+    return {
+      'hoyo': '${index + 1}',
+      'metros': '',
+      'handicap': '${handicapValues[index]}',
+      'metros_EPPA': '',
+      'handicap_EPPA': '',
+      'metros_BLANC': '',
+      'handicap_BLANC': '',
+    };
+  });
+
+  return jsonEncode({'rpta': 'ok', 'valor': jsonEncode(holes)});
+}
+
+int _containerColorCount(WidgetTester tester, Color color) {
+  return tester.widgetList<Container>(find.byType(Container)).where((
+    container,
+  ) {
+    final decoration = container.decoration;
+    return decoration is BoxDecoration && decoration.color == color;
+  }).length;
+}
+
+Finder _horizontalScrollAncestorOfButton(String text) {
+  return find.ancestor(
+    of: find.widgetWithText(OutlinedButton, text),
+    matching: find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal,
+    ),
+  );
 }
 
 String _twoDigits(int value) {

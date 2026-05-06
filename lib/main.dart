@@ -423,6 +423,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_savedGameIdKey, acceptedIdPartida);
+    await prefs.remove(_savedPlayersKey);
+    await prefs.remove(_savedGameRowsKey);
     await prefs.setString(_invitationGameIdKey, acceptedIdPartida);
     await prefs.setInt(
       _invitationGameCreatedAtKey,
@@ -1763,6 +1765,15 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         return;
       }
 
+      if (playersResponse.hasExpiredStarted) {
+        await _resetCurrentUserInvitationGame(
+          previousIdPartida: idPartida,
+          reason: 'partida caducada',
+        );
+        _startPlayersRefreshPolling();
+        return;
+      }
+
       if (playersResponse.hasStarted) {
         _openScorecardForPlayers(idPartida: idPartida, players: players);
         return;
@@ -1847,6 +1858,14 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       final playersResponse = await _fetchPlayersResponse(idPartida);
       final players = playersResponse.players;
       if (!mounted) {
+        return;
+      }
+
+      if (playersResponse.hasExpiredStarted) {
+        await _resetCurrentUserInvitationGame(
+          previousIdPartida: idPartida,
+          reason: 'partida caducada',
+        );
         return;
       }
 
@@ -2061,6 +2080,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
 
   Future<void> _resetCurrentUserInvitationGame({
     String? previousIdPartida,
+    String reason = 'salir',
   }) async {
     final previousId = previousIdPartida?.trim() ?? '';
     var newIdPartida = widget.generateIdPartida();
@@ -2079,7 +2099,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       widget.fieldId,
       newIdPartida,
     );
-    debugPrint('creaPartida($newIdPartida) tras salir: $createResponse');
+    debugPrint('creaPartida($newIdPartida) tras $reason: $createResponse');
     await widget.onInvitationGameCreated(newIdPartida);
     await widget.onInvitationAccepted(newIdPartida);
 
@@ -2149,6 +2169,15 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     try {
       final playersResponse = await _fetchPlayersResponse(idPartida);
       if (!mounted) {
+        return true;
+      }
+
+      if (playersResponse.hasExpiredStarted) {
+        await _resetCurrentUserInvitationGame(
+          previousIdPartida: idPartida,
+          reason: 'partida caducada',
+        );
+        _startPlayersRefreshPolling();
         return true;
       }
 
@@ -4038,6 +4067,42 @@ bool _isSameDay(DateTime left, DateTime right) {
       left.day == right.day;
 }
 
+bool _backendDateIsBeforeToday(String value) {
+  final date = _parseBackendDate(value);
+  if (date == null) {
+    return false;
+  }
+
+  return _dateOnly(date).isBefore(_dateOnly(DateTime.now()));
+}
+
+DateTime? _parseBackendDate(String value) {
+  final digits = value.trim().replaceAll(RegExp(r'\D'), '');
+  if (digits.length < 6) {
+    return null;
+  }
+
+  final hasFullYear = digits.length >= 8 && digits.startsWith('20');
+  final yearText = hasFullYear
+      ? digits.substring(0, 4)
+      : digits.substring(0, 2);
+  final monthStart = hasFullYear ? 4 : 2;
+  final year = int.tryParse(yearText);
+  final month = int.tryParse(digits.substring(monthStart, monthStart + 2));
+  final day = int.tryParse(digits.substring(monthStart + 2, monthStart + 4));
+  if (year == null || month == null || day == null) {
+    return null;
+  }
+
+  final fullYear = hasFullYear ? year : 2000 + year;
+  final parsed = DateTime(fullYear, month, day);
+  if (parsed.year != fullYear || parsed.month != month || parsed.day != day) {
+    return null;
+  }
+
+  return parsed;
+}
+
 String _monthLabel(DateTime day) {
   return '${_spanishMonthNames[day.month - 1]} ${day.year}';
 }
@@ -4750,7 +4815,9 @@ class _InvitedPlayersResponse {
   final String empezada;
   final List<_InvitedPlayer> players;
 
-  bool get hasStarted => empezada.trim().isNotEmpty;
+  bool get hasExpiredStarted => _backendDateIsBeforeToday(empezada);
+
+  bool get hasStarted => empezada.trim().isNotEmpty && !hasExpiredStarted;
 }
 
 class _InitialGameState {
@@ -4759,7 +4826,9 @@ class _InitialGameState {
   final String empezada;
   final String ultimaModificacion;
 
-  bool get hasStarted => empezada.trim().isNotEmpty;
+  bool get hasExpiredStarted => _backendDateIsBeforeToday(empezada);
+
+  bool get hasStarted => empezada.trim().isNotEmpty && !hasExpiredStarted;
 
   bool get hasModification => ultimaModificacion.trim().isNotEmpty;
 

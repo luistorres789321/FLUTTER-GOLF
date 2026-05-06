@@ -56,7 +56,7 @@ class GolfScorecardScreen extends StatefulWidget {
   static const double _labelWidth = 180;
   static const double _holeWidth = 48;
   static const double _subtotalWidth = 64;
-  static const double _foldWidth = 18;
+  static const double _foldWidth = 0;
   static const double _summaryWidth = 82;
   static const double _cardHorizontalPadding = 48;
   static const double _cardBorderWidth = 2;
@@ -366,98 +366,138 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
                   return SingleChildScrollView(
                     padding: EdgeInsets.all(horizontalPadding),
-                    child: Center(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: SizedBox(
-                          width: cardWidth,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
+                              OutlinedButton.icon(
+                                onPressed: widget.onExit,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFFF6F2EA),
+                                  backgroundColor: const Color.fromRGBO(
+                                    11,
+                                    36,
+                                    26,
+                                    0.32,
+                                  ),
+                                  side: const BorderSide(
+                                    color: Color(0xFFF6F2EA),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 14,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.arrow_back),
+                                label: const Text('Salir'),
+                              ),
+                              const SizedBox(height: 10),
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: availableWidth,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    OutlinedButton.icon(
-                                      onPressed: widget.onExit,
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: const Color(
-                                          0xFFF6F2EA,
-                                        ),
-                                        backgroundColor: const Color.fromRGBO(
-                                          11,
-                                          36,
-                                          26,
-                                          0.32,
-                                        ),
-                                        side: const BorderSide(
-                                          color: Color(0xFFF6F2EA),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 18,
-                                          vertical: 14,
+                                    if (canLeaveGame) ...[
+                                      Flexible(
+                                        child: OutlinedButton.icon(
+                                          onPressed: _showLeaveGameConfirmation,
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: const Color(
+                                              0xFFF6F2EA,
+                                            ),
+                                            backgroundColor:
+                                                const Color.fromRGBO(
+                                                  107,
+                                                  67,
+                                                  45,
+                                                  0.28,
+                                                ),
+                                            side: const BorderSide(
+                                              color: Color(0xFFF6F2EA),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 12,
+                                            ),
+                                            textStyle: const TextStyle(
+                                              fontSize: 13,
+                                            ),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                          ),
+                                          icon: const Icon(
+                                            Icons.person_remove,
+                                            size: 18,
+                                          ),
+                                          label: const Text(
+                                            'Darme de baja',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            softWrap: false,
+                                          ),
                                         ),
                                       ),
-                                      icon: const Icon(Icons.arrow_back),
-                                      label: const Text('Salir'),
-                                    ),
-                                    if (canLeaveGame)
-                                      OutlinedButton.icon(
-                                        onPressed: _showLeaveGameConfirmation,
+                                      const SizedBox(width: 8),
+                                    ],
+                                    Flexible(
+                                      child: OutlinedButton.icon(
+                                        onPressed: _isDestroyingGame
+                                            ? null
+                                            : _showDestroyCardConfirmation,
                                         style: OutlinedButton.styleFrom(
                                           foregroundColor: const Color(
                                             0xFFF6F2EA,
                                           ),
                                           backgroundColor: const Color.fromRGBO(
-                                            107,
-                                            67,
-                                            45,
-                                            0.28,
+                                            139,
+                                            58,
+                                            52,
+                                            0.32,
                                           ),
                                           side: const BorderSide(
                                             color: Color(0xFFF6F2EA),
                                           ),
                                           padding: const EdgeInsets.symmetric(
-                                            horizontal: 18,
-                                            vertical: 14,
+                                            horizontal: 12,
+                                            vertical: 12,
                                           ),
+                                          textStyle: const TextStyle(
+                                            fontSize: 13,
+                                          ),
+                                          visualDensity: VisualDensity.compact,
                                         ),
-                                        icon: const Icon(Icons.person_remove),
-                                        label: const Text('Darme de baja'),
-                                      ),
-                                    OutlinedButton.icon(
-                                      onPressed: _isDestroyingGame
-                                          ? null
-                                          : _showDestroyCardConfirmation,
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: const Color(
-                                          0xFFF6F2EA,
+                                        icon: const Icon(
+                                          Icons.delete_forever,
+                                          size: 18,
                                         ),
-                                        backgroundColor: const Color.fromRGBO(
-                                          139,
-                                          58,
-                                          52,
-                                          0.32,
-                                        ),
-                                        side: const BorderSide(
-                                          color: Color(0xFFF6F2EA),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 18,
-                                          vertical: 14,
+                                        label: const Text(
+                                          'Destruir tarjeta',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          softWrap: false,
                                         ),
                                       ),
-                                      icon: const Icon(Icons.delete_forever),
-                                      label: const Text('Destruir Tarjeta'),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              _ScorecardCard(
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Center(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: SizedBox(
+                              width: cardWidth,
+                              child: _ScorecardCard(
                                 guideRows: _guideRows,
                                 playRowValues: _playRowValues,
                                 playRowLabels: _playRowPlayerLabels,
@@ -465,14 +505,11 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                 jugadores: widget.jugadores,
                                 loadError: _loadError,
                                 onPlayValueChanged: _updatePlayValue,
-                                playRowsJsonString: _playRowsJsonString,
-                                differentRemotePlayRowsJson:
-                                    widget.differentRemotePlayRowsJson,
                               ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   );
                 },
@@ -494,8 +531,6 @@ class _ScorecardCard extends StatelessWidget {
     required this.jugadores,
     required this.loadError,
     required this.onPlayValueChanged,
-    required this.playRowsJsonString,
-    required this.differentRemotePlayRowsJson,
   });
 
   final List<_ScoreRowData> guideRows;
@@ -506,8 +541,6 @@ class _ScorecardCard extends StatelessWidget {
   final String? loadError;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
-  final String playRowsJsonString;
-  final String? differentRemotePlayRowsJson;
 
   @override
   Widget build(BuildContext context) {
@@ -531,87 +564,39 @@ class _ScorecardCard extends StatelessWidget {
           colors: [Color(0xFFFAF8F3), Color(0xFFF6F2EA)],
         ),
       ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Align(
-                child: Container(
-                  width: 20,
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [
-                        Colors.transparent,
-                        Color.fromRGBO(215, 217, 223, 0.84),
-                        Color.fromRGBO(255, 255, 255, 0.98),
-                        Color.fromRGBO(215, 217, 223, 0.84),
-                        Colors.transparent,
-                      ],
-                      stops: [0.0, 0.18, 0.5, 0.82, 1.0],
-                    ),
-                  ),
-                ),
+      child: Padding(
+        padding: GolfScorecardScreen._cardPadding,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _ScoreGrid(
+              guideRows: guideRows,
+              playRowValues: playRowValues,
+              playRowLabels: playRowLabels,
+              onPlayValueChanged: onPlayValueChanged,
+            ),
+            if (loadError != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                loadError!,
+                style: const TextStyle(color: Color(0xFF9D433D), fontSize: 13),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Text(
+              'idPartida: $idPartida · Jugadores: $jugadores',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF545B66),
               ),
             ),
-          ),
-          Padding(
-            padding: GolfScorecardScreen._cardPadding,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _ScoreGrid(
-                  guideRows: guideRows,
-                  playRowValues: playRowValues,
-                  playRowLabels: playRowLabels,
-                  onPlayValueChanged: onPlayValueChanged,
-                ),
-                if (loadError != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    loadError!,
-                    style: const TextStyle(
-                      color: Color(0xFF9D433D),
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                Text(
-                  'idPartida: $idPartida · Jugadores: $jugadores',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF545B66),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(
-                  playRowsJsonString,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF545B66),
-                  ),
-                ),
-                if (differentRemotePlayRowsJson != null) ...[
-                  const SizedBox(height: 6),
-                  SelectableText(
-                    differentRemotePlayRowsJson!,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF7A1E1E),
-                    ),
-                  ),
-                ],
-                SizedBox(height: 22),
-                const _LowerSection(),
-                const SizedBox(height: 18),
-                const _MarkerStrip(),
-              ],
-            ),
-          ),
-        ],
+            SizedBox(height: 22),
+            const _LowerSection(),
+            const SizedBox(height: 18),
+            const _MarkerStrip(),
+          ],
+        ),
       ),
     );
   }
@@ -633,6 +618,8 @@ class _ScoreGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final handicapValues = _handicapValuesFromGuideRows(guideRows);
+
     return Column(
       children: [
         const _GridHeaderRow(),
@@ -646,6 +633,7 @@ class _ScoreGrid extends StatelessWidget {
             playerLabel: rowIndex < playRowLabels.length
                 ? playRowLabels[rowIndex]
                 : '${rowIndex + 1}',
+            handicapValues: handicapValues,
             isEditable: true,
             onValueChanged: onPlayValueChanged,
           );
@@ -768,6 +756,7 @@ class _GridPlayRow extends StatelessWidget {
     required this.rowIndex,
     required this.values,
     required this.playerLabel,
+    required this.handicapValues,
     required this.isEditable,
     required this.onValueChanged,
   });
@@ -776,6 +765,7 @@ class _GridPlayRow extends StatelessWidget {
   final int rowIndex;
   final List<String> values;
   final String playerLabel;
+  final List<String> handicapValues;
   final bool isEditable;
   final void Function(int rowIndex, int holeIndex, String value) onValueChanged;
 
@@ -783,6 +773,9 @@ class _GridPlayRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final frontValues = values.take(9).toList(growable: false);
     final backValues = values.skip(9).take(9).toList(growable: false);
+    final frontTotal = _sumScoreValues(frontValues);
+    final backTotal = _sumScoreValues(backValues);
+    final roundTotal = _sumScoreValues(values);
     final tone = isEditable ? row.tone : _RowTone.disabledPlay;
 
     return SizedBox(
@@ -801,6 +794,13 @@ class _GridPlayRow extends StatelessWidget {
             _GridCell.data(
               width: GolfScorecardScreen._holeWidth,
               tone: tone,
+              decoration: _scoreCellDecoration(
+                tone,
+                _scoreCellResult(
+                  entry.value,
+                  _holeValue(handicapValues, entry.key),
+                ),
+              ),
               child: _NumericGridInput(
                 initialValue: entry.value,
                 enabled: isEditable,
@@ -811,13 +811,20 @@ class _GridPlayRow extends StatelessWidget {
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
             tone: tone,
-            child: const SizedBox.shrink(),
+            child: _ValueText(frontTotal),
           ),
           const _FoldCell(),
           for (final entry in backValues.asMap().entries)
             _GridCell.data(
               width: GolfScorecardScreen._holeWidth,
               tone: tone,
+              decoration: _scoreCellDecoration(
+                tone,
+                _scoreCellResult(
+                  entry.value,
+                  _holeValue(handicapValues, entry.key + 9),
+                ),
+              ),
               child: _NumericGridInput(
                 initialValue: entry.value,
                 enabled: isEditable,
@@ -828,9 +835,13 @@ class _GridPlayRow extends StatelessWidget {
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
             tone: tone,
-            child: const SizedBox.shrink(),
+            child: _ValueText(backTotal),
           ),
-          for (final _ in _summaryHeaders)
+          _GridCell.summary(
+            width: GolfScorecardScreen._summaryWidth,
+            child: _ValueText(roundTotal),
+          ),
+          for (var index = 1; index < _summaryHeaders.length; index++)
             _GridCell.summary(
               width: GolfScorecardScreen._summaryWidth,
               child: const SizedBox.shrink(),
@@ -839,6 +850,39 @@ class _GridPlayRow extends StatelessWidget {
       ),
     );
   }
+}
+
+List<String> _handicapValuesFromGuideRows(List<_ScoreRowData> guideRows) {
+  for (final row in guideRows) {
+    if (row.label.trim().toLowerCase() != 'handicap') {
+      continue;
+    }
+
+    return [...row.frontValues, ...row.backValues];
+  }
+
+  return const [];
+}
+
+String _holeValue(List<String> values, int holeIndex) {
+  return holeIndex < values.length ? values[holeIndex] : '';
+}
+
+String _sumScoreValues(Iterable<String> values) {
+  var total = 0;
+  var hasValue = false;
+
+  for (final value in values) {
+    final parsed = int.tryParse(value.trim());
+    if (parsed == null) {
+      continue;
+    }
+
+    total += parsed;
+    hasValue = true;
+  }
+
+  return hasValue ? '$total' : '';
 }
 
 class _LowerSection extends StatelessWidget {
@@ -1164,13 +1208,14 @@ class _GridCell extends StatelessWidget {
     required double width,
     required Widget child,
     required _RowTone tone,
+    BoxDecoration? decoration,
     Alignment alignment = Alignment.center,
     EdgeInsets padding = EdgeInsets.zero,
     bool isLabel = false,
   }) {
     return _GridCell._(
       width: width,
-      decoration: _dataDecoration(tone, isLabel: isLabel),
+      decoration: decoration ?? _dataDecoration(tone, isLabel: isLabel),
       defaultStyle: TextStyle(
         fontSize: isLabel ? 15 : 14,
         color: _toneTextColor(tone),
@@ -1422,11 +1467,14 @@ class _NumericGridInput extends StatefulWidget {
 
 class _NumericGridInputState extends State<_NumericGridInput> {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue);
+    _focusNode = FocusNode();
+    _focusNode.addListener(_selectValueOnFocus);
   }
 
   @override
@@ -1442,14 +1490,34 @@ class _NumericGridInputState extends State<_NumericGridInput> {
 
   @override
   void dispose() {
+    _focusNode.removeListener(_selectValueOnFocus);
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  void _selectValueOnFocus() {
+    if (!_focusNode.hasFocus || !widget.enabled) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_focusNode.hasFocus || !widget.enabled) {
+        return;
+      }
+
+      _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _controller.text.length,
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: _controller,
+      focusNode: _focusNode,
       keyboardType: TextInputType.number,
       textInputAction: TextInputAction.next,
       enabled: widget.enabled,
@@ -1474,9 +1542,10 @@ class _NumericGridInputState extends State<_NumericGridInput> {
       ),
       inputFormatters: [
         FilteringTextInputFormatter.digitsOnly,
-        LengthLimitingTextInputFormatter(3),
+        LengthLimitingTextInputFormatter(2),
       ],
       onChanged: widget.onChanged,
+      onTapOutside: (_) => _focusNode.unfocus(),
     );
   }
 }
@@ -1940,4 +2009,57 @@ Color _toneTextColor(_RowTone tone) {
     case _RowTone.mutedLabel:
       return const Color(0xFF56606C);
   }
+}
+
+BoxDecoration _scoreCellDecoration(_RowTone tone, _ScoreCellResult? result) {
+  if (result == null || tone == _RowTone.disabledPlay) {
+    return _dataDecoration(tone, isLabel: false);
+  }
+
+  return BoxDecoration(
+    border: const Border.fromBorderSide(_borderSide),
+    color: _scoreCellColor(result),
+  );
+}
+
+Color _scoreCellColor(_ScoreCellResult result) {
+  switch (result) {
+    case _ScoreCellResult.underHandicap:
+      return const Color(0xFFE1F3DA);
+    case _ScoreCellResult.equalHandicap:
+      return const Color(0xFFFFF1BF);
+    case _ScoreCellResult.oneOverHandicap:
+      return const Color(0xFFDCEEFF);
+    case _ScoreCellResult.overOneOverHandicap:
+      return const Color(0xFFBFD9F2);
+  }
+}
+
+_ScoreCellResult? _scoreCellResult(String scoreValue, String handicapValue) {
+  final score = int.tryParse(scoreValue.trim());
+  final handicap = int.tryParse(handicapValue.trim());
+  if (score == null || handicap == null) {
+    return null;
+  }
+
+  if (score < handicap) {
+    return _ScoreCellResult.underHandicap;
+  }
+
+  if (score == handicap) {
+    return _ScoreCellResult.equalHandicap;
+  }
+
+  if (score == handicap + 1) {
+    return _ScoreCellResult.oneOverHandicap;
+  }
+
+  return _ScoreCellResult.overOneOverHandicap;
+}
+
+enum _ScoreCellResult {
+  underHandicap,
+  equalHandicap,
+  oneOverHandicap,
+  overOneOverHandicap,
 }
