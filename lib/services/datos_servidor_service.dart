@@ -200,6 +200,13 @@ class DatosServidorService {
     });
   }
 
+  Future<String> obtenerTodasLasPartidas(String idUsuario) {
+    return _getTexto({
+      'accion': 'obtener_todas_las_partidas',
+      'idUsuario': idUsuario,
+    });
+  }
+
   Future<String> actualizaConfiguracionCampos(
     String idCampo,
     String parametro,

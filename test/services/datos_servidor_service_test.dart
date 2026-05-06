@@ -398,6 +398,25 @@ void main() {
       });
     });
 
+    test('construye la query de obtenerTodasLasPartidas', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"partidas":[]}', 200);
+        }),
+      );
+
+      final result = await service.obtenerTodasLasPartidas('Z44456');
+
+      expect(result, '{"partidas":[]}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_todas_las_partidas',
+        'idUsuario': 'Z44456',
+      });
+    });
+
     test('lanza DatosServidorException cuando el backend responde error', () {
       final service = DatosServidorService(
         client: MockClient((request) async {

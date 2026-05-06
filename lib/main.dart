@@ -472,6 +472,35 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     );
   }
 
+  void _openStatistics() {
+    final userInformation = _userInformation;
+    final idUsuario = userInformation?.idUsuario.trim() ?? '';
+    if (userInformation == null || idUsuario.isEmpty) {
+      setState(() {
+        _creationError =
+            'No se pudo identificar el usuario para ver estadisticas.';
+        _userRegistrationError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _creationError = null;
+      _userRegistrationError = null;
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _StatisticsScreen(
+          datosServidorService: _datosServidorService,
+          fieldId: _savedFieldId,
+          idUsuario: idUsuario,
+          alias: userInformation.alias,
+        ),
+      ),
+    );
+  }
+
   Future<void> _savePlayRowsJson(String playRowsJson) async {
     final session = _activeSession;
     if (session == null) {
@@ -1076,6 +1105,23 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
+                                onPressed: canUseGameActions
+                                    ? _openStatistics
+                                    : null,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF235C3D),
+                                  side: const BorderSide(
+                                    color: Color(0xFF235C3D),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 18,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.query_stats),
+                                label: const Text('Estadisticas'),
+                              ),
+                              const SizedBox(height: 14),
+                              OutlinedButton.icon(
                                 onPressed: _editUserInformation,
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: const Color(0xFF545B66),
@@ -1199,9 +1245,10 @@ class _GolfLogo extends StatelessWidget {
 }
 
 class _TopLeftBackButton extends StatelessWidget {
-  const _TopLeftBackButton({required this.onPressed});
+  const _TopLeftBackButton({required this.onPressed, this.label = 'Volver'});
 
   final VoidCallback? onPressed;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -1215,7 +1262,7 @@ class _TopLeftBackButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
         icon: const Icon(Icons.arrow_back),
-        label: const Text('Volver'),
+        label: Text(label),
       ),
     );
   }
@@ -1227,6 +1274,7 @@ class _ReservationScreenFrame extends StatelessWidget {
     required this.children,
     this.maxWidth = 520,
     this.showBackButton = false,
+    this.backLabel = 'Volver',
     this.onBack,
   });
 
@@ -1234,6 +1282,7 @@ class _ReservationScreenFrame extends StatelessWidget {
   final List<Widget> children;
   final double maxWidth;
   final bool showBackButton;
+  final String backLabel;
   final VoidCallback? onBack;
 
   @override
@@ -1280,6 +1329,7 @@ class _ReservationScreenFrame extends StatelessWidget {
                           _TopLeftBackButton(
                             onPressed:
                                 onBack ?? () => Navigator.of(context).pop(),
+                            label: backLabel,
                           ),
                           const SizedBox(height: 10),
                         ],
@@ -1303,6 +1353,329 @@ class _ReservationScreenFrame extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatisticsScreen extends StatefulWidget {
+  const _StatisticsScreen({
+    required this.datosServidorService,
+    required this.fieldId,
+    required this.idUsuario,
+    required this.alias,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String fieldId;
+  final String idUsuario;
+  final String alias;
+
+  @override
+  State<_StatisticsScreen> createState() => _StatisticsScreenState();
+}
+
+class _StatisticsScreenState extends State<_StatisticsScreen> {
+  bool _isLoading = true;
+  String? _error;
+  List<_StatisticsRound> _rounds = const [];
+  List<String> _handicapValues = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadStatistics());
+  }
+
+  Future<void> _loadStatistics() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final responses = await Future.wait([
+        widget.datosServidorService.obtenerTodasLasPartidas(widget.idUsuario),
+        widget.datosServidorService.cojeConfiguracionCampos(
+          widget.fieldId,
+          'configuracion_tarjeta',
+        ),
+      ]);
+      final rounds = _statisticsRoundsFromResponse(
+        responses[0],
+        idUsuario: widget.idUsuario,
+        alias: widget.alias,
+      )..sort((left, right) => right.sortValue.compareTo(left.sortValue));
+      final handicapValues = _statisticsHandicapValuesFromResponse(
+        responses[1],
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _rounds = rounds;
+        _handicapValues = handicapValues;
+        _isLoading = false;
+      });
+    } catch (error) {
+      debugPrint('obtener estadisticas fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _error = 'No se pudieron cargar las estadisticas.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Estadisticas',
+      maxWidth: 980,
+      showBackButton: true,
+      backLabel: 'Salir',
+      children: [
+        if (_isLoading)
+          const SizedBox(
+            height: 190,
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFF567B37)),
+            ),
+          )
+        else if (_error != null) ...[
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: _loadStatistics,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF567B37),
+              side: const BorderSide(color: Color(0xFF567B37)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ] else if (_rounds.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 42),
+            child: Text(
+              'No hay partidas',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Color(0xFF6C737D)),
+            ),
+          )
+        else
+          _StatisticsTable(rounds: _rounds, handicapValues: _handicapValues),
+      ],
+    );
+  }
+}
+
+class _StatisticsTable extends StatelessWidget {
+  const _StatisticsTable({required this.rounds, required this.handicapValues});
+
+  static const _dateWidth = 104.0;
+  static const _holeWidth = 38.0;
+  static const _rowHeight = 44.0;
+  static const _gridWidth = _dateWidth + (_holeWidth * 18);
+
+  final List<_StatisticsRound> rounds;
+  final List<String> handicapValues;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color.fromRGBO(255, 255, 255, 0.54),
+          border: Border.all(color: const Color.fromRGBO(128, 134, 144, 0.24)),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: _gridWidth,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const _StatisticsHeaderRow(),
+                for (final round in rounds)
+                  _StatisticsDataRow(
+                    round: round,
+                    handicapValues: handicapValues,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatisticsHeaderRow extends StatelessWidget {
+  const _StatisticsHeaderRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 38,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF2F5A44), Color(0xFF264836)],
+        ),
+      ),
+      child: Row(
+        children: [
+          _StatisticsHeaderCell(
+            width: _StatisticsTable._dateWidth,
+            label: 'Fecha',
+            alignment: Alignment.centerLeft,
+          ),
+          for (var hole = 1; hole <= 18; hole++)
+            _StatisticsHeaderCell(
+              width: _StatisticsTable._holeWidth,
+              label: '$hole',
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatisticsHeaderCell extends StatelessWidget {
+  const _StatisticsHeaderCell({
+    required this.width,
+    required this.label,
+    this.alignment = Alignment.center,
+  });
+
+  final double width;
+  final String label;
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Align(
+        alignment: alignment,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFFF5F7F0),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatisticsDataRow extends StatelessWidget {
+  const _StatisticsDataRow({required this.round, required this.handicapValues});
+
+  final _StatisticsRound round;
+  final List<String> handicapValues;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _StatisticsTable._rowHeight,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: Color.fromRGBO(128, 134, 144, 0.20)),
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: _StatisticsTable._dateWidth,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Text(
+                  round.dateLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
+              ),
+            ),
+            for (var index = 0; index < 18; index++)
+              _StatisticsScoreCell(
+                value: round.holeValues[index],
+                handicapValue: _statisticsHoleValue(handicapValues, index),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatisticsScoreCell extends StatelessWidget {
+  const _StatisticsScoreCell({
+    required this.value,
+    required this.handicapValue,
+  });
+
+  final String value;
+  final String handicapValue;
+
+  @override
+  Widget build(BuildContext context) {
+    final result = _statisticsCellResult(value, handicapValue);
+    final hasValue = value.trim().isNotEmpty;
+
+    return SizedBox(
+      width: _StatisticsTable._holeWidth,
+      child: Center(
+        child: Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: result == null
+                ? const Color.fromRGBO(255, 255, 255, 0.84)
+                : _statisticsScoreCellColor(result),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: const Color.fromRGBO(128, 134, 144, 0.30),
+            ),
+          ),
+          alignment: Alignment.center,
+          child: hasValue
+              ? Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF545B66),
+                  ),
+                )
+              : const SizedBox.shrink(),
         ),
       ),
     );
@@ -4168,6 +4541,91 @@ List<_InvitedPlayer> _invitedPlayersFromPayload(Object? payload) {
   return [for (final row in rows) ?_InvitedPlayer.fromMap(row)];
 }
 
+List<_StatisticsRound> _statisticsRoundsFromResponse(
+  String response, {
+  required String idUsuario,
+  required String alias,
+}) {
+  final decoded = _decodeJsonLikePayload(response.trim()) ?? response;
+  final payloads = _statisticsRoundPayloads(decoded, 0);
+
+  return [
+    for (final payload in payloads)
+      ?_StatisticsRound.fromPayload(
+        payload,
+        idUsuario: idUsuario,
+        alias: alias,
+      ),
+  ];
+}
+
+List<Object?> _statisticsRoundPayloads(Object? payload, int depth) {
+  if (depth > 4 || payload == null) {
+    return const [];
+  }
+
+  if (payload is String) {
+    final decoded = _decodeJsonLikePayload(payload.trim());
+    return decoded == null
+        ? <Object?>[payload]
+        : _statisticsRoundPayloads(decoded, depth + 1);
+  }
+
+  if (payload is List) {
+    return payload.cast<Object?>();
+  }
+
+  if (payload is Map) {
+    final map = _stringKeyedMap(payload);
+    for (final key in const ['partidas', 'partida', 'data', 'valor', 'json']) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
+
+      final nestedPayloads = _statisticsRoundPayloads(map[key], depth + 1);
+      if (nestedPayloads.isNotEmpty) {
+        return nestedPayloads;
+      }
+    }
+
+    return [map];
+  }
+
+  return const [];
+}
+
+List<String> _statisticsHandicapValuesFromResponse(String response) {
+  final decoded = _decodeJsonLikePayload(response.trim()) ?? response;
+  var rows = _decodeMapRows(decoded, 0);
+
+  if (rows == null) {
+    final valor = _extractWrappedBackendField(response, 'valor');
+    if (valor != null) {
+      rows = _decodeMapRows(valor, 0);
+    }
+  }
+
+  final holeRows = [...?rows];
+  holeRows.sort((left, right) {
+    final leftHole = int.tryParse('${left['hoyo'] ?? ''}'.trim()) ?? 0;
+    final rightHole = int.tryParse('${right['hoyo'] ?? ''}'.trim()) ?? 0;
+    return leftHole.compareTo(rightHole);
+  });
+
+  return [
+    for (final row in holeRows.take(18)) '${row['handicap'] ?? ''}'.trim(),
+  ];
+}
+
+String? _extractWrappedBackendField(String rawResponse, String fieldName) {
+  final match = RegExp(
+    '^\\{"rpta":"[^"]*","$fieldName":"(.*)"\\}\$',
+    dotAll: true,
+  ).firstMatch(rawResponse.trim());
+
+  return match?.group(1);
+}
+
 List<Map<String, dynamic>>? _decodeAgendaRows(Object? payload, int depth) {
   return _decodeMapRows(payload, depth);
 }
@@ -4501,6 +4959,245 @@ class _GolfPositionPayload {
   final String precision;
 }
 
+class _StatisticsRound {
+  const _StatisticsRound({
+    required this.dateLabel,
+    required this.sortValue,
+    required this.holeValues,
+  });
+
+  final String dateLabel;
+  final int sortValue;
+  final List<String> holeValues;
+
+  static _StatisticsRound? fromPayload(
+    Object? payload, {
+    required String idUsuario,
+    required String alias,
+  }) {
+    final rows = _statisticsPlayRowsFromPayload(payload);
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    final userRow =
+        rows.cast<Map<String, dynamic>?>().firstWhere(
+          (row) => row != null && _statisticsRowBelongsToUser(row, idUsuario),
+          orElse: () => null,
+        ) ??
+        rows.cast<Map<String, dynamic>?>().firstWhere(
+          (row) => row != null && _statisticsRowBelongsToAlias(row, alias),
+          orElse: () => null,
+        ) ??
+        (rows.length == 1 ? rows.first : null);
+    if (userRow == null) {
+      return null;
+    }
+
+    final holeValues = [
+      for (var index = 1; index <= 18; index++)
+        '${userRow['hoyo_$index'] ?? ''}'.trim(),
+    ];
+    if (holeValues.every((value) => value.isEmpty)) {
+      return null;
+    }
+
+    final rawDate =
+        _statisticsDateValue(payload) ?? _statisticsDateValue(userRow) ?? '';
+
+    return _StatisticsRound(
+      dateLabel: _statisticsDateLabel(rawDate),
+      sortValue: _statisticsDateSortValue(rawDate),
+      holeValues: holeValues,
+    );
+  }
+}
+
+List<Map<String, dynamic>> _statisticsPlayRowsFromPayload(Object? payload) {
+  final decodedRows = _decodePlayRowsPayload(payload);
+  if (decodedRows != null && decodedRows.isNotEmpty) {
+    return decodedRows;
+  }
+
+  if (payload is String) {
+    final decoded = _decodeJsonLikePayload(payload.trim());
+    return decoded == null ? const [] : _statisticsPlayRowsFromPayload(decoded);
+  }
+
+  if (payload is Map) {
+    final map = _stringKeyedMap(payload);
+    for (final key in const [
+      'json_partida',
+      'jsonPartida',
+      'json_hoyos',
+      'jsonHoyos',
+      'partida',
+      'jugadores',
+      'rows',
+      'data',
+      'valor',
+      'json',
+    ]) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
+
+      final rows = _statisticsPlayRowsFromPayload(map[key]);
+      if (rows.isNotEmpty) {
+        return rows;
+      }
+    }
+
+    if (_statisticsMapLooksLikePlayRow(map)) {
+      return [map];
+    }
+  }
+
+  return const [];
+}
+
+bool _statisticsMapLooksLikePlayRow(Map<String, dynamic> map) {
+  return map.keys.any((key) => RegExp(r'^hoyo_\d+$').hasMatch(key));
+}
+
+bool _statisticsRowBelongsToUser(Map<String, dynamic> row, String idUsuario) {
+  final rowUserId = '${row['idUsuario'] ?? row['idJugador'] ?? ''}'.trim();
+  return rowUserId.isNotEmpty && rowUserId == idUsuario.trim();
+}
+
+bool _statisticsRowBelongsToAlias(Map<String, dynamic> row, String alias) {
+  final rowAlias =
+      '${row['jugador'] ?? row['alias'] ?? row['allias'] ?? row['Alias'] ?? ''}'
+          .trim();
+  return rowAlias.isNotEmpty && rowAlias == alias.trim();
+}
+
+String? _statisticsDateValue(Object? payload) {
+  if (payload is String) {
+    final decoded = _decodeJsonLikePayload(payload.trim());
+    return decoded == null ? null : _statisticsDateValue(decoded);
+  }
+
+  if (payload is! Map) {
+    return null;
+  }
+
+  final map = _stringKeyedMap(payload);
+  for (final key in const [
+    'dia',
+    'fecha',
+    'fecha_partida',
+    'fechaPartida',
+    'dia_partida',
+    'diaPartida',
+    'empezada',
+    'modificado',
+    'ultima_modificacion',
+  ]) {
+    final value = '${map[key] ?? ''}'.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+String _statisticsDateLabel(String rawDate) {
+  final trimmedDate = rawDate.trim();
+  final isoMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(trimmedDate);
+  if (isoMatch != null) {
+    return '${isoMatch.group(3)}/${isoMatch.group(2)}/${isoMatch.group(1)}';
+  }
+
+  final digits = trimmedDate.replaceAll(RegExp(r'\D'), '');
+  if (digits.length == 8 && digits.startsWith('20')) {
+    return '${digits.substring(6, 8)}/${digits.substring(4, 6)}/'
+        '${digits.substring(0, 4)}';
+  }
+
+  if (RegExp(r'^\d{6,14}$').hasMatch(digits)) {
+    final year = 2000 + int.parse(digits.substring(0, 2));
+    final month = digits.substring(2, 4);
+    final day = digits.substring(4, 6);
+    return '$day/$month/$year';
+  }
+
+  return trimmedDate.isEmpty ? 'Sin fecha' : trimmedDate;
+}
+
+int _statisticsDateSortValue(String rawDate) {
+  final trimmedDate = rawDate.trim();
+  final isoMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(trimmedDate);
+  if (isoMatch != null) {
+    return int.tryParse(
+          '${isoMatch.group(1)}${isoMatch.group(2)}${isoMatch.group(3)}000000',
+        ) ??
+        0;
+  }
+
+  final digits = trimmedDate.replaceAll(RegExp(r'\D'), '');
+  if (digits.length == 8 && digits.startsWith('20')) {
+    return int.tryParse('${digits}000000') ?? 0;
+  }
+
+  if (RegExp(r'^\d{6,14}$').hasMatch(digits)) {
+    final padded = digits.padRight(12, '0');
+    return int.tryParse('20$padded') ?? 0;
+  }
+
+  return 0;
+}
+
+String _statisticsHoleValue(List<String> values, int holeIndex) {
+  return holeIndex < values.length ? values[holeIndex] : '';
+}
+
+_StatisticsCellResult? _statisticsCellResult(
+  String scoreValue,
+  String handicapValue,
+) {
+  final score = int.tryParse(scoreValue.trim());
+  final handicap = int.tryParse(handicapValue.trim());
+  if (score == null || handicap == null) {
+    return null;
+  }
+
+  if (score < handicap) {
+    return _StatisticsCellResult.underHandicap;
+  }
+
+  if (score == handicap) {
+    return _StatisticsCellResult.equalHandicap;
+  }
+
+  if (score == handicap + 1) {
+    return _StatisticsCellResult.oneOverHandicap;
+  }
+
+  return _StatisticsCellResult.overOneOverHandicap;
+}
+
+Color _statisticsScoreCellColor(_StatisticsCellResult result) {
+  switch (result) {
+    case _StatisticsCellResult.underHandicap:
+      return const Color(0xFFE1F3DA);
+    case _StatisticsCellResult.equalHandicap:
+      return const Color(0xFFFFFBE8);
+    case _StatisticsCellResult.oneOverHandicap:
+      return const Color(0xFFDCEEFF);
+    case _StatisticsCellResult.overOneOverHandicap:
+      return const Color(0xFFBFD9F2);
+  }
+}
+
+enum _StatisticsCellResult {
+  underHandicap,
+  equalHandicap,
+  oneOverHandicap,
+  overOneOverHandicap,
+}
+
 String _createPlayRowsJsonForPlayers(
   List<_InvitedPlayer> players, {
   List<Map<String, dynamic>> existingRows = const [],
@@ -4650,6 +5347,8 @@ List<Map<String, dynamic>>? _decodePlayRowsPayloadValue(
   if (payload is Map) {
     final map = _stringKeyedMap(payload);
     for (final key in const [
+      'json_partida',
+      'jsonPartida',
       'json_hoyos',
       'jsonHoyos',
       'valor',

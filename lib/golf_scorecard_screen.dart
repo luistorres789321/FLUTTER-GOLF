@@ -2027,7 +2027,7 @@ Color _scoreCellColor(_ScoreCellResult result) {
     case _ScoreCellResult.underHandicap:
       return const Color(0xFFE1F3DA);
     case _ScoreCellResult.equalHandicap:
-      return const Color(0xFFFFF1BF);
+      return const Color(0xFFFFFBE8);
     case _ScoreCellResult.oneOverHandicap:
       return const Color(0xFFDCEEFF);
     case _ScoreCellResult.overOneOverHandicap:

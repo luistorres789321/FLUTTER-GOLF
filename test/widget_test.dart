@@ -72,6 +72,7 @@ void main() {
     expect(find.text('Recuperar Ronda'), findsNothing);
     expect(find.text('Iniciar Salida'), findsOneWidget);
     expect(find.text('Salidas Pendientes'), findsNothing);
+    expect(find.text('Estadisticas'), findsOneWidget);
     expect(find.text('Mi Informacion'), findsOneWidget);
     expect(_logoFinder(), findsOneWidget);
 
@@ -79,6 +80,124 @@ void main() {
       find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
     expect(startButton.onPressed, isNotNull);
+  });
+
+  testWidgets('opens statistics with current user score rows', (
+    WidgetTester tester,
+  ) async {
+    final requests = <Uri>[];
+    final firstRoundRows = jsonEncode([
+      {
+        'idUsuario': '123',
+        'jugador': 'Auto',
+        'modificado': '260505101501',
+        for (var hole = 1; hole <= 18; hole++)
+          'hoyo_$hole': ['2', '3', '4', '5'][(hole - 1) % 4],
+      },
+      {
+        'idUsuario': '999',
+        'jugador': 'Luis',
+        'modificado': '260505101502',
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '88',
+      },
+    ]);
+    final secondRoundRows = jsonEncode([
+      {
+        'idUsuario': '123',
+        'jugador': 'Auto',
+        'modificado': '260419114501',
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '4',
+      },
+    ]);
+    final allGamesResponse = jsonEncode({
+      'partidas': [
+        {'dia': '260505', 'json_partida': firstRoundRows},
+        {'fecha': '2026-04-19', 'json_partida': secondRoundRows},
+      ],
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          scorecardConfigurationResponse: _scorecardConfigurationResponse(
+            List.filled(18, 3),
+          ),
+          allGamesResponse: allGamesResponse,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Estadisticas'));
+    await tester.tap(find.text('Estadisticas'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('05/05/2026'), findsOneWidget);
+    expect(find.text('19/04/2026'), findsOneWidget);
+    expect(find.text('Respuesta backend'), findsNothing);
+    expect(find.text(allGamesResponse), findsNothing);
+    expect(find.text('88'), findsNothing);
+    expect(
+      requests.any(
+        (uri) =>
+            uri.queryParameters['accion'] == 'obtener_todas_las_partidas' &&
+            uri.queryParameters['idUsuario'] == '123',
+      ),
+      isTrue,
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFE1F3DA)),
+      greaterThan(0),
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFFFFBE8)),
+      greaterThan(0),
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFDCEEFF)),
+      greaterThan(0),
+    );
+    expect(
+      _containerColorCount(tester, const Color(0xFFBFD9F2)),
+      greaterThan(0),
+    );
+  });
+
+  testWidgets('hides raw statistics backend response when request fails', (
+    WidgetTester tester,
+  ) async {
+    const backendError = 'accion no reconocida (obtener_todas_las_partidas)';
+
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          allGamesResponse: backendError,
+          allGamesStatusCode: 500,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Estadisticas'));
+    await tester.tap(find.text('Estadisticas'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('No se pudieron cargar las estadisticas.'),
+      findsOneWidget,
+    );
+    expect(find.text('Respuesta backend'), findsNothing);
+    expect(find.text(backendError), findsNothing);
   });
 
   testWidgets('shows start game button when backend state has started game', (
@@ -537,7 +656,7 @@ void main() {
       greaterThan(0),
     );
     expect(
-      _containerColorCount(tester, const Color(0xFFFFF1BF)),
+      _containerColorCount(tester, const Color(0xFFFFFBE8)),
       greaterThan(0),
     );
     expect(
@@ -1474,6 +1593,8 @@ DatosServidorService _existingFieldsService({
   String Function(String? idPartida)? playersResponseForGame,
   String Function(String? idPartida)? playRowsResponseForGame,
   String? scorecardConfigurationResponse,
+  String allGamesResponse = '{"partidas":[]}',
+  int allGamesStatusCode = 200,
 }) {
   final annotatedInvitationGames = <String>{};
 
@@ -1578,6 +1699,10 @@ DatosServidorService _existingFieldsService({
 
       if (accion == 'obtener_estado_inicial') {
         return http.Response(initialStateResponse, 200);
+      }
+
+      if (accion == 'obtener_todas_las_partidas') {
+        return http.Response(allGamesResponse, allGamesStatusCode);
       }
 
       final exists = switch (accion) {
