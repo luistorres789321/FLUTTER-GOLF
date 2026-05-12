@@ -328,6 +328,66 @@ void main() {
       });
     });
 
+    test('construye la query de yaExisteMovilUsuario', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"si","idUsuario":"123"}', 200);
+        }),
+      );
+
+      final result = await service.yaExisteMovilUsuario('600000000');
+
+      expect(result, '{"rpta":"si","idUsuario":"123"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'ya_existe_movil_usuario',
+        'movil': '600000000',
+      });
+    });
+
+    test('construye la query de editaUsuario', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.editaUsuario(
+        '123',
+        'Auto',
+        'Nombre',
+        'Apellidos',
+        'Direccion 1',
+        '28001',
+        'Madrid',
+        'Madrid',
+        '600000000',
+        'auto@example.com',
+        '12345',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'edita_usuario_golf',
+        'idUsuario': '123',
+        'alias': 'Auto',
+        'nombre': 'Nombre',
+        'apellidos': 'Apellidos',
+        'direccion': 'Direccion 1',
+        'cp': '28001',
+        'poblacion': 'Madrid',
+        'provincia': 'Madrid',
+        'movil': '600000000',
+        'mail': 'auto@example.com',
+        'numero_federado_golf': '12345',
+      });
+    });
+
     test('construye la query de obtenerAgenda', () async {
       late Uri requestedUri;
 
@@ -373,6 +433,148 @@ void main() {
         'hasta': '1100',
         'idPartida': 'ABC123XYZ9',
         'idUsuarioCreador': '123',
+      });
+    });
+
+    test('construye la query de crearLiguilla', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.crearLiguilla(
+        idUsuario: '123',
+        titulo: 'Liga jueves',
+        jornadas: '-1',
+        minimoJugadoresJornada: '4',
+        participacionMinimaJugador: '3',
+        puedenInvitar: '1',
+        participaAnfitrion: 'S',
+        mensajeInvitacion: 'Te invito a la liguilla',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'crear_liguilla',
+        'idUsuario': '123',
+        'titulo': 'Liga jueves',
+        'jornadas': '-1',
+        'minimo_jugadores_jornada': '4',
+        'participacion_minima_jugador': '3',
+        'pueden_invitar': '1',
+        'participa_anfitrion': 'S',
+        'mensaje_invitacion': 'Te invito a la liguilla',
+      });
+    });
+
+    test('construye la query de obtenerLiguillas', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('[]', 200);
+        }),
+      );
+
+      final result = await service.obtenerLiguillas('123');
+
+      expect(result, '[]');
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_liguillas',
+        'idUsuario': '123',
+      });
+    });
+
+    test('construye la query de miraSiHayInvitacionPendiente', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'invitaciones':2,'liguillas':[]}", 200);
+        }),
+      );
+
+      final result = await service.miraSiHayInvitacionPendiente('123');
+
+      expect(result, "{'invitaciones':2,'liguillas':[]}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'mira_si_hay_invitacion_pendiente',
+        'idUsuario': '123',
+      });
+    });
+
+    test('construye la query de obtenerInvitadosLiguilla', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('[]', 200);
+        }),
+      );
+
+      final result = await service.obtenerInvitadosLiguilla('7');
+
+      expect(result, '[]');
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_invitados_liguilla',
+        'idLiguilla': '7',
+      });
+    });
+
+    test('construye la query de enviaInvitacion', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.enviaInvitacion(
+        idLiguilla: '7',
+        movil: '600111111',
+        invitadorPor: '123',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'envia_invitacion',
+        'idLiguilla': '7',
+        'movil': '600111111',
+        'invitador_por': '123',
+      });
+    });
+
+    test('construye la query de decisionParticipacion', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.decisionParticipacion(
+        idLiguilla: '7',
+        idUsuario: '123',
+        decision: 'S',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'decision_participacion',
+        'idLiguilla': '7',
+        'idUsuario': '123',
+        'decision': 'S',
       });
     });
 

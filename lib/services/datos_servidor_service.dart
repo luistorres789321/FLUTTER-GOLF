@@ -141,6 +141,10 @@ class DatosServidorService {
     return _getTexto({'accion': 'ya_existe_movil', 'movil': movil});
   }
 
+  Future<String> yaExisteMovilUsuario(String movil) {
+    return _getTexto({'accion': 'ya_existe_movil_usuario', 'movil': movil});
+  }
+
   Future<String> yaExisteMail(String mail) {
     return _getTexto({'accion': 'ya_existe_mail', 'mail': mail});
   }
@@ -172,6 +176,35 @@ class DatosServidorService {
     });
   }
 
+  Future<String> editaUsuario(
+    String idUsuario,
+    String alias,
+    String nombre,
+    String apellidos,
+    String direccion,
+    String cp,
+    String poblacion,
+    String provincia,
+    String movil,
+    String mail,
+    String numeroFederadoGolf,
+  ) {
+    return _getTexto({
+      'accion': 'edita_usuario_golf',
+      'idUsuario': idUsuario,
+      'alias': alias,
+      'nombre': nombre,
+      'apellidos': apellidos,
+      'direccion': direccion,
+      'cp': cp,
+      'poblacion': poblacion,
+      'provincia': provincia,
+      'movil': movil,
+      'mail': mail,
+      'numero_federado_golf': numeroFederadoGolf,
+    });
+  }
+
   Future<String> obtenerAgenda(String dia) {
     return _getTexto({'accion': 'obtener_agenda', 'dia': dia});
   }
@@ -190,6 +223,73 @@ class DatosServidorService {
       'hasta': hasta,
       'idPartida': idPartida,
       'idUsuarioCreador': idUsuarioCreador,
+    });
+  }
+
+  Future<String> crearLiguilla({
+    required String idUsuario,
+    required String titulo,
+    required String jornadas,
+    required String minimoJugadoresJornada,
+    required String participacionMinimaJugador,
+    required String puedenInvitar,
+    required String participaAnfitrion,
+    required String mensajeInvitacion,
+  }) {
+    return _getTexto({
+      'accion': 'crear_liguilla',
+      'idUsuario': idUsuario,
+      'titulo': titulo,
+      'jornadas': jornadas,
+      'minimo_jugadores_jornada': minimoJugadoresJornada,
+      'participacion_minima_jugador': participacionMinimaJugador,
+      'pueden_invitar': puedenInvitar,
+      'participa_anfitrion': participaAnfitrion,
+      'mensaje_invitacion': mensajeInvitacion,
+    });
+  }
+
+  Future<String> obtenerLiguillas(String idUsuario) {
+    return _getTexto({'accion': 'obtener_liguillas', 'idUsuario': idUsuario});
+  }
+
+  Future<String> miraSiHayInvitacionPendiente(String idUsuario) {
+    return _getTexto({
+      'accion': 'mira_si_hay_invitacion_pendiente',
+      'idUsuario': idUsuario,
+    });
+  }
+
+  Future<String> obtenerInvitadosLiguilla(String idLiguilla) {
+    return _getTexto({
+      'accion': 'obtener_invitados_liguilla',
+      'idLiguilla': idLiguilla,
+    });
+  }
+
+  Future<String> enviaInvitacion({
+    required String idLiguilla,
+    required String movil,
+    required String invitadorPor,
+  }) {
+    return _getTexto({
+      'accion': 'envia_invitacion',
+      'idLiguilla': idLiguilla,
+      'movil': movil,
+      'invitador_por': invitadorPor,
+    });
+  }
+
+  Future<String> decisionParticipacion({
+    required String idLiguilla,
+    required String idUsuario,
+    required String decision,
+  }) {
+    return _getTexto({
+      'accion': 'decision_participacion',
+      'idLiguilla': idLiguilla,
+      'idUsuario': idUsuario,
+      'decision': decision,
     });
   }
 

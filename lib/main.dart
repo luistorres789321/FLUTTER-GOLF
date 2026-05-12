@@ -67,6 +67,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   static const _defaultFieldId = '1';
   static const _jsonHoyosPollDelay = Duration(seconds: 5);
   static const _positionTransmissionDelay = Duration(seconds: 20);
+  static const _pendingInvitationPollDelay = Duration(seconds: 6);
   static const _invitationGameLifetime = Duration(hours: 2);
 
   late final DatosServidorService _datosServidorService;
@@ -74,8 +75,12 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   int _jsonHoyosPollingGeneration = 0;
   Timer? _jsonHoyosPollingTimer;
   Timer? _positionTransmissionTimer;
+  Timer? _pendingInvitationPollingTimer;
+  Timer? _leagueButtonBlinkTimer;
   bool _isAppVisible = true;
   bool _isTransmittingPosition = false;
+  bool _isCheckingPendingLeagueInvitations = false;
+  bool _leagueButtonBlinkOn = false;
   bool _isLoading = true;
   String? _savedGameId;
   String _savedFieldId = _defaultFieldId;
@@ -83,6 +88,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   String? _creationError;
   String? _userRegistrationError;
   _InitialGameState _initialGameState = const _InitialGameState();
+  _PendingLeagueInvitations _pendingLeagueInvitations =
+      const _PendingLeagueInvitations.empty();
   _GameSession? _activeSession;
   _UserInformation? _userInformation;
   bool _isUserRegistered = false;
@@ -104,6 +111,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _stopJsonHoyosPolling();
     _stopPositionTransmission();
+    _stopPendingInvitationPolling();
+    _stopLeagueButtonBlink(updateState: false);
     if (_ownsDatosServidorService) {
       _datosServidorService.close();
     }
@@ -115,8 +124,12 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     _isAppVisible = state == AppLifecycleState.resumed;
     if (_isAppVisible) {
       _startPositionTransmissionIfNeeded();
+      _startPendingInvitationPollingIfNeeded();
+      _syncLeagueButtonBlinkTimer();
     } else {
       _stopPositionTransmission();
+      _stopPendingInvitationPolling();
+      _stopLeagueButtonBlink();
     }
   }
 
@@ -150,6 +163,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     if (isUserRegistered && userInformation.idUsuario.isNotEmpty) {
       unawaited(_loadInitialGameState(userInformation.idUsuario));
       _startPositionTransmissionIfNeeded();
+      _startPendingInvitationPollingIfNeeded();
     }
   }
 
@@ -209,6 +223,10 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     String idUsuario = '',
   }) async {
     final savedInformation = information.copyWith(idUsuario: idUsuario);
+    final previousUserId = _userInformation?.idUsuario.trim() ?? '';
+    final nextUserId = savedInformation.idUsuario.trim();
+    final shouldResetPendingInvitations =
+        !isRegistered || previousUserId != nextUserId;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _savedUserInformationKey,
@@ -220,6 +238,11 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
       return;
     }
 
+    if (shouldResetPendingInvitations) {
+      _stopPendingInvitationPolling();
+      _stopLeagueButtonBlink(updateState: false);
+    }
+
     setState(() {
       _userInformation = savedInformation;
       _isUserRegistered = isRegistered;
@@ -228,13 +251,19 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
       _userRegistrationError = isRegistered
           ? null
           : _userRegistrationRequiredMessage;
+      if (shouldResetPendingInvitations) {
+        _pendingLeagueInvitations = const _PendingLeagueInvitations.empty();
+        _leagueButtonBlinkOn = false;
+      }
     });
 
     if (isRegistered && savedInformation.idUsuario.isNotEmpty) {
       unawaited(_loadInitialGameState(savedInformation.idUsuario));
       _startPositionTransmissionIfNeeded();
+      _startPendingInvitationPollingIfNeeded();
     } else {
       _stopPositionTransmission();
+      _stopPendingInvitationPolling();
     }
   }
 
@@ -282,6 +311,129 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   void _stopPositionTransmission() {
     _positionTransmissionTimer?.cancel();
     _positionTransmissionTimer = null;
+  }
+
+  String get _pendingInvitationUserId {
+    if (!_isUserRegistered) {
+      return '';
+    }
+
+    return _userInformation?.idUsuario.trim() ?? '';
+  }
+
+  void _startPendingInvitationPollingIfNeeded() {
+    if (!_isAppVisible ||
+        _pendingInvitationUserId.isEmpty ||
+        _pendingInvitationPollingTimer != null ||
+        _isCheckingPendingLeagueInvitations) {
+      return;
+    }
+
+    unawaited(_checkPendingLeagueInvitations());
+  }
+
+  void _stopPendingInvitationPolling() {
+    _pendingInvitationPollingTimer?.cancel();
+    _pendingInvitationPollingTimer = null;
+  }
+
+  Future<void> _checkPendingLeagueInvitations() async {
+    final idUsuario = _pendingInvitationUserId;
+    if (!_isAppVisible || idUsuario.isEmpty) {
+      return;
+    }
+
+    _stopPendingInvitationPolling();
+    if (_isCheckingPendingLeagueInvitations) {
+      return;
+    }
+
+    _isCheckingPendingLeagueInvitations = true;
+    try {
+      final response = await _datosServidorService.miraSiHayInvitacionPendiente(
+        idUsuario,
+      );
+      final pendingInvitations = _pendingLeagueInvitationsFromResponse(
+        response,
+      );
+
+      if (!mounted || _pendingInvitationUserId != idUsuario) {
+        return;
+      }
+
+      _applyPendingLeagueInvitations(pendingInvitations);
+    } catch (error) {
+      debugPrint('miraSiHayInvitacionPendiente fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('miraSiHayInvitacionPendiente backend body: ${error.body}');
+      }
+    } finally {
+      _isCheckingPendingLeagueInvitations = false;
+      if (mounted &&
+          _isAppVisible &&
+          _pendingInvitationUserId == idUsuario &&
+          idUsuario.isNotEmpty) {
+        _pendingInvitationPollingTimer = Timer(_pendingInvitationPollDelay, () {
+          _pendingInvitationPollingTimer = null;
+          unawaited(_checkPendingLeagueInvitations());
+        });
+      }
+    }
+  }
+
+  void _applyPendingLeagueInvitations(
+    _PendingLeagueInvitations pendingInvitations,
+  ) {
+    final hadPendingInvitations = _pendingLeagueInvitations.hasPending;
+    setState(() {
+      _pendingLeagueInvitations = pendingInvitations;
+      if (!pendingInvitations.hasPending) {
+        _leagueButtonBlinkOn = false;
+      } else if (!hadPendingInvitations) {
+        _leagueButtonBlinkOn = true;
+      }
+    });
+    _syncLeagueButtonBlinkTimer();
+  }
+
+  void _refreshPendingLeagueInvitations() {
+    _stopPendingInvitationPolling();
+    unawaited(_checkPendingLeagueInvitations());
+  }
+
+  void _syncLeagueButtonBlinkTimer() {
+    final shouldBlink = _isAppVisible && _pendingLeagueInvitations.hasPending;
+    if (!shouldBlink) {
+      _stopLeagueButtonBlink();
+      return;
+    }
+
+    if (_leagueButtonBlinkTimer != null) {
+      return;
+    }
+
+    _leagueButtonBlinkTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_isAppVisible || !_pendingLeagueInvitations.hasPending) {
+        _stopLeagueButtonBlink();
+        return;
+      }
+
+      setState(() {
+        _leagueButtonBlinkOn = !_leagueButtonBlinkOn;
+      });
+    });
+  }
+
+  void _stopLeagueButtonBlink({bool updateState = true}) {
+    _leagueButtonBlinkTimer?.cancel();
+    _leagueButtonBlinkTimer = null;
+    if (updateState && _leagueButtonBlinkOn && mounted) {
+      setState(() {
+        _leagueButtonBlinkOn = false;
+      });
+    } else {
+      _leagueButtonBlinkOn = false;
+    }
   }
 
   Future<void> _transmitCurrentPosition() async {
@@ -347,6 +499,11 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   }
 
   void _cancelUserInformationEditing() {
+    if (_userInformation == null && !_isEditingUserInformation) {
+      unawaited(SystemNavigator.pop());
+      return;
+    }
+
     setState(() {
       _isEditingUserInformation = false;
       if (_userInformation == null) {
@@ -499,6 +656,41 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<void> _openLeagues() async {
+    if (!_canCreateUserBoundAction()) {
+      setState(() {
+        _creationError =
+            'No se pudo identificar el usuario para ver liguillas.';
+        _userRegistrationError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _creationError = null;
+      _userRegistrationError = null;
+    });
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _LeaguesScreen(
+          datosServidorService: _datosServidorService,
+          idUsuario: _userInformation!.idUsuario.trim(),
+          pendingInvitationLeagueIds: _pendingLeagueInvitations.leagueIds,
+          onInvitationDecisionChanged: _refreshPendingLeagueInvitations,
+        ),
+      ),
+    );
+    if (mounted) {
+      _refreshPendingLeagueInvitations();
+    }
+  }
+
+  bool _canCreateUserBoundAction() {
+    final idUsuario = _userInformation?.idUsuario.trim() ?? '';
+    return _isUserRegistered && idUsuario.isNotEmpty;
   }
 
   Future<void> _savePlayRowsJson(String playRowsJson) async {
@@ -1062,11 +1254,16 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
                                     disabledBackgroundColor: const Color(
                                       0xFFBBC5B0,
                                     ),
+                                    textStyle: _homeActionButtonTextStyle,
                                     padding: const EdgeInsets.symmetric(
-                                      vertical: 18,
+                                      vertical: 20,
                                     ),
+                                    minimumSize: const Size(0, 58),
                                   ),
-                                  icon: const Icon(Icons.play_arrow),
+                                  icon: const Icon(
+                                    Icons.play_arrow,
+                                    size: _homeActionIconSize,
+                                  ),
                                   label: Text(primaryStartLabel),
                                 )
                               else
@@ -1079,11 +1276,16 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
                                     side: const BorderSide(
                                       color: Color(0xFF6B432D),
                                     ),
+                                    textStyle: _homeActionButtonTextStyle,
                                     padding: const EdgeInsets.symmetric(
-                                      vertical: 18,
+                                      vertical: 20,
                                     ),
+                                    minimumSize: const Size(0, 58),
                                   ),
-                                  icon: const Icon(Icons.play_arrow),
+                                  icon: const Icon(
+                                    Icons.play_arrow,
+                                    size: _homeActionIconSize,
+                                  ),
                                   label: Text(primaryStartLabel),
                                 ),
                               const SizedBox(height: 14),
@@ -1096,12 +1298,26 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
                                   side: const BorderSide(
                                     color: Color(0xFF567B37),
                                   ),
+                                  textStyle: _homeActionButtonTextStyle,
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 18,
+                                    vertical: 20,
                                   ),
+                                  minimumSize: const Size(0, 58),
                                 ),
-                                icon: const Icon(Icons.event_available),
+                                icon: const Icon(
+                                  Icons.event_available,
+                                  size: _homeActionIconSize,
+                                ),
                                 label: const Text('Reservar Salida'),
+                              ),
+                              const SizedBox(height: 14),
+                              _HomeLeaguesButton(
+                                onPressed: canUseGameActions
+                                    ? () => unawaited(_openLeagues())
+                                    : null,
+                                isBlinking:
+                                    _pendingLeagueInvitations.hasPending,
+                                isBlinkOn: _leagueButtonBlinkOn,
                               ),
                               const SizedBox(height: 14),
                               OutlinedButton.icon(
@@ -1113,11 +1329,16 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
                                   side: const BorderSide(
                                     color: Color(0xFF235C3D),
                                   ),
+                                  textStyle: _homeActionButtonTextStyle,
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 18,
+                                    vertical: 20,
                                   ),
+                                  minimumSize: const Size(0, 58),
                                 ),
-                                icon: const Icon(Icons.query_stats),
+                                icon: const Icon(
+                                  Icons.query_stats,
+                                  size: _homeActionIconSize,
+                                ),
                                 label: const Text('Estadisticas'),
                               ),
                               const SizedBox(height: 14),
@@ -1128,11 +1349,16 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
                                   side: const BorderSide(
                                     color: Color(0xFF9AA092),
                                   ),
+                                  textStyle: _homeActionButtonTextStyle,
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 18,
+                                    vertical: 20,
                                   ),
+                                  minimumSize: const Size(0, 58),
                                 ),
-                                icon: const Icon(Icons.person),
+                                icon: const Icon(
+                                  Icons.person,
+                                  size: _homeActionIconSize,
+                                ),
                                 label: const Text('Mi Informacion'),
                               ),
                             ],
@@ -1168,6 +1394,49 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     }
 
     return newIdPartida;
+  }
+}
+
+const _homeActionButtonTextStyle = TextStyle(
+  fontSize: 18,
+  fontWeight: FontWeight.w800,
+);
+const _homeActionIconSize = 28.0;
+
+class _HomeLeaguesButton extends StatelessWidget {
+  const _HomeLeaguesButton({
+    required this.onPressed,
+    required this.isBlinking,
+    required this.isBlinkOn,
+  });
+
+  final VoidCallback? onPressed;
+  final bool isBlinking;
+  final bool isBlinkOn;
+
+  @override
+  Widget build(BuildContext context) {
+    const accentColor = Color(0xFF6B432D);
+    final foregroundColor = isBlinking && isBlinkOn
+        ? Colors.white
+        : accentColor;
+    final backgroundColor = isBlinking && isBlinkOn
+        ? accentColor
+        : Colors.transparent;
+
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: foregroundColor,
+        backgroundColor: backgroundColor,
+        side: const BorderSide(color: accentColor),
+        textStyle: _homeActionButtonTextStyle,
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        minimumSize: const Size(0, 58),
+      ),
+      icon: const Icon(Icons.emoji_events, size: _homeActionIconSize),
+      label: const Text('Liguillas'),
+    );
   }
 }
 
@@ -1433,6 +1702,25 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
     }
   }
 
+  void _openRoundScorecard(_StatisticsRound round) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => GolfScorecardScreen(
+          idPartida: round.idPartida.isEmpty
+              ? round.dateLabel
+              : round.idPartida,
+          jugadores: round.jugadores,
+          initialPlayRowsJson: round.playRowsJson,
+          datosServidorService: widget.datosServidorService,
+          onExit: () => Navigator.of(context).pop(),
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+          isReadOnly: true,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _ReservationScreenFrame(
@@ -1475,22 +1763,34 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
             ),
           )
         else
-          _StatisticsTable(rounds: _rounds, handicapValues: _handicapValues),
+          _StatisticsTable(
+            rounds: _rounds,
+            handicapValues: _handicapValues,
+            onViewRound: _openRoundScorecard,
+          ),
       ],
     );
   }
 }
 
 class _StatisticsTable extends StatelessWidget {
-  const _StatisticsTable({required this.rounds, required this.handicapValues});
+  const _StatisticsTable({
+    required this.rounds,
+    required this.handicapValues,
+    required this.onViewRound,
+  });
 
+  static const _actionWidth = 50.0;
   static const _dateWidth = 104.0;
+  static const _differenceWidth = 72.0;
   static const _holeWidth = 38.0;
   static const _rowHeight = 44.0;
-  static const _gridWidth = _dateWidth + (_holeWidth * 18);
+  static const _gridWidth =
+      _actionWidth + _dateWidth + _differenceWidth + (_holeWidth * 18);
 
   final List<_StatisticsRound> rounds;
   final List<String> handicapValues;
+  final ValueChanged<_StatisticsRound> onViewRound;
 
   @override
   Widget build(BuildContext context) {
@@ -1513,6 +1813,7 @@ class _StatisticsTable extends StatelessWidget {
                   _StatisticsDataRow(
                     round: round,
                     handicapValues: handicapValues,
+                    onViewRound: onViewRound,
                   ),
               ],
             ),
@@ -1537,10 +1838,18 @@ class _StatisticsHeaderRow extends StatelessWidget {
       ),
       child: Row(
         children: [
+          const _StatisticsHeaderCell(
+            width: _StatisticsTable._actionWidth,
+            label: '',
+          ),
           _StatisticsHeaderCell(
             width: _StatisticsTable._dateWidth,
             label: 'Fecha',
             alignment: Alignment.centerLeft,
+          ),
+          const _StatisticsHeaderCell(
+            width: _StatisticsTable._differenceWidth,
+            label: 'Dif. HCP',
           ),
           for (var hole = 1; hole <= 18; hole++)
             _StatisticsHeaderCell(
@@ -1589,13 +1898,26 @@ class _StatisticsHeaderCell extends StatelessWidget {
 }
 
 class _StatisticsDataRow extends StatelessWidget {
-  const _StatisticsDataRow({required this.round, required this.handicapValues});
+  const _StatisticsDataRow({
+    required this.round,
+    required this.handicapValues,
+    required this.onViewRound,
+  });
 
   final _StatisticsRound round;
   final List<String> handicapValues;
+  final ValueChanged<_StatisticsRound> onViewRound;
 
   @override
   Widget build(BuildContext context) {
+    final effectiveHandicapValues = round.handicapValues.isEmpty
+        ? handicapValues
+        : round.handicapValues;
+    final handicapDifference = _statisticsHandicapDifference(
+      round.holeValues,
+      effectiveHandicapValues,
+    );
+
     return SizedBox(
       height: _StatisticsTable._rowHeight,
       child: DecoratedBox(
@@ -1606,6 +1928,16 @@ class _StatisticsDataRow extends StatelessWidget {
         ),
         child: Row(
           children: [
+            SizedBox(
+              width: _StatisticsTable._actionWidth,
+              child: IconButton(
+                onPressed: () => onViewRound(round),
+                tooltip: 'Ver tarjeta',
+                icon: const Icon(Icons.visibility, size: 20),
+                color: const Color(0xFF235C3D),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
             SizedBox(
               width: _StatisticsTable._dateWidth,
               child: Padding(
@@ -1622,12 +1954,59 @@ class _StatisticsDataRow extends StatelessWidget {
                 ),
               ),
             ),
+            _StatisticsDifferenceCell(value: handicapDifference),
             for (var index = 0; index < 18; index++)
               _StatisticsScoreCell(
                 value: round.holeValues[index],
-                handicapValue: _statisticsHoleValue(handicapValues, index),
+                handicapValue: _statisticsHoleValue(
+                  effectiveHandicapValues,
+                  index,
+                ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatisticsDifferenceCell extends StatelessWidget {
+  const _StatisticsDifferenceCell({required this.value});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final result = _statisticsDifferenceResult(value);
+
+    return SizedBox(
+      width: _StatisticsTable._differenceWidth,
+      child: Center(
+        child: Container(
+          width: 58,
+          height: 32,
+          decoration: BoxDecoration(
+            color: result == null
+                ? const Color.fromRGBO(255, 255, 255, 0.84)
+                : _statisticsScoreCellColor(result),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: const Color.fromRGBO(128, 134, 144, 0.30),
+            ),
+          ),
+          alignment: Alignment.center,
+          child: value.isEmpty
+              ? const SizedBox.shrink()
+              : Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
         ),
       ),
     );
@@ -3613,6 +3992,1516 @@ class _ReservationSuccessScreen extends StatelessWidget {
   }
 }
 
+class _LeaguesScreen extends StatefulWidget {
+  const _LeaguesScreen({
+    required this.datosServidorService,
+    required this.idUsuario,
+    required this.pendingInvitationLeagueIds,
+    required this.onInvitationDecisionChanged,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String idUsuario;
+  final Set<String> pendingInvitationLeagueIds;
+  final VoidCallback onInvitationDecisionChanged;
+
+  @override
+  State<_LeaguesScreen> createState() => _LeaguesScreenState();
+}
+
+class _LeaguesScreenState extends State<_LeaguesScreen> {
+  Timer? _pendingLeaguePulseTimer;
+  late final Set<String> _pendingInvitationLeagueIds;
+  bool _isLoading = true;
+  bool _pendingLeaguePulseOn = false;
+  String? _error;
+  List<_LeagueSummary> _leagues = const [];
+  String? _decidingLeagueId;
+
+  @override
+  void initState() {
+    super.initState();
+    _pendingInvitationLeagueIds = Set<String>.of(
+      widget.pendingInvitationLeagueIds,
+    );
+    unawaited(_loadLeagues());
+  }
+
+  @override
+  void dispose() {
+    _pendingLeaguePulseTimer?.cancel();
+    super.dispose();
+  }
+
+  bool _shouldPulseLeague(_LeagueSummary league) {
+    return league.isPending ||
+        _pendingInvitationLeagueIds.contains(league.idLiguilla);
+  }
+
+  void _syncPendingLeaguePulseTimer() {
+    final shouldPulse = _leagues.any(_shouldPulseLeague);
+    if (!shouldPulse) {
+      _pendingLeaguePulseTimer?.cancel();
+      _pendingLeaguePulseTimer = null;
+      if (_pendingLeaguePulseOn) {
+        setState(() {
+          _pendingLeaguePulseOn = false;
+        });
+      }
+      return;
+    }
+
+    if (_pendingLeaguePulseTimer != null) {
+      return;
+    }
+
+    setState(() {
+      _pendingLeaguePulseOn = true;
+    });
+    _pendingLeaguePulseTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_leagues.any(_shouldPulseLeague)) {
+        _pendingLeaguePulseTimer?.cancel();
+        _pendingLeaguePulseTimer = null;
+        return;
+      }
+
+      setState(() {
+        _pendingLeaguePulseOn = !_pendingLeaguePulseOn;
+      });
+    });
+  }
+
+  Future<void> _loadLeagues() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.obtenerLiguillas(
+        widget.idUsuario,
+      );
+      final leagues = _leaguesFromResponse(
+        response,
+      ).where((league) => league.isVisibleFor(widget.idUsuario)).toList();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _leagues = leagues;
+        _isLoading = false;
+      });
+      _syncPendingLeaguePulseTimer();
+    } catch (error) {
+      debugPrint('obtenerLiguillas fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('obtenerLiguillas backend body: ${error.body}');
+      }
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _error = 'No se pudieron cargar las liguillas.';
+      });
+    }
+  }
+
+  Future<void> _openCreateLeague() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => _CreateLeagueScreen(
+          datosServidorService: widget.datosServidorService,
+          idUsuario: widget.idUsuario,
+        ),
+      ),
+    );
+    if (!mounted || created != true) {
+      return;
+    }
+
+    _showLeagueSnackBar('Liguilla creada ok');
+    await _loadLeagues();
+  }
+
+  Future<void> _confirmLeaveAcceptedLeague(_LeagueSummary league) async {
+    final shouldLeave = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Seguro que te das de baja de la liguilla ?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('No'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Si'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldLeave != true) {
+      return;
+    }
+
+    await _sendParticipationDecision(league, 'N');
+  }
+
+  void _openLeagueParticipants(_LeagueSummary league) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _LeagueParticipantsScreen(
+          datosServidorService: widget.datosServidorService,
+          league: league,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openLeagueInvitation(_LeagueSummary league) async {
+    final invited = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => _LeagueInvitationScreen(
+          datosServidorService: widget.datosServidorService,
+          league: league,
+          idUsuario: widget.idUsuario,
+        ),
+      ),
+    );
+    if (!mounted || invited != true) {
+      return;
+    }
+
+    _showLeagueSnackBar('Invitación ok');
+  }
+
+  Future<void> _sendParticipationDecision(
+    _LeagueSummary league,
+    String decision,
+  ) async {
+    setState(() {
+      _decidingLeagueId = league.idLiguilla;
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.decisionParticipacion(
+        idLiguilla: league.idLiguilla,
+        idUsuario: widget.idUsuario,
+        decision: decision,
+      );
+      debugPrint('decisionParticipacion: $response');
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      _showLeagueSnackBar(
+        decision == 'S'
+            ? 'Apuntado ok a la liguilla'
+            : 'Dado de baja de la liguilla',
+      );
+      await _loadLeagues();
+      if (!mounted) {
+        return;
+      }
+      _applyParticipationDecisionLocally(league, decision);
+      widget.onInvitationDecisionChanged();
+    } catch (error) {
+      debugPrint('decisionParticipacion fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('decisionParticipacion backend body: ${error.body}');
+      }
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = 'No se pudo registrar la decision.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _decidingLeagueId = null;
+        });
+      }
+    }
+  }
+
+  void _applyParticipationDecisionLocally(
+    _LeagueSummary league,
+    String decision,
+  ) {
+    final leagueIndex = _leagues.indexWhere(
+      (item) => item.idLiguilla == league.idLiguilla,
+    );
+    if (leagueIndex == -1) {
+      return;
+    }
+
+    final updatedLeagues = List<_LeagueSummary>.of(_leagues);
+    final updatedLeague = updatedLeagues[leagueIndex].copyWith(
+      pendienteDecidir: 'N',
+      fechaRechazo: decision == 'N' ? 'S' : '',
+    );
+
+    setState(() {
+      _pendingInvitationLeagueIds.remove(league.idLiguilla);
+      if (updatedLeague.isVisibleFor(widget.idUsuario)) {
+        updatedLeagues[leagueIndex] = updatedLeague;
+        _leagues = updatedLeagues;
+      } else {
+        _leagues = [
+          for (final item in updatedLeagues)
+            if (item.idLiguilla != league.idLiguilla) item,
+        ];
+      }
+    });
+    _syncPendingLeaguePulseTimer();
+  }
+
+  void _showLeagueSnackBar(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF235C3D),
+          duration: const Duration(seconds: 5),
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Liguillas',
+      maxWidth: 680,
+      showBackButton: true,
+      backLabel: 'Salir',
+      children: [
+        OutlinedButton.icon(
+          onPressed: _openCreateLeague,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF6B432D),
+            side: const BorderSide(color: Color(0xFF6B432D)),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: const Icon(Icons.add),
+          label: const Text('Crea Liguilla'),
+        ),
+        const SizedBox(height: 18),
+        if (_isLoading)
+          const SizedBox(
+            height: 170,
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFF567B37)),
+            ),
+          )
+        else if (_error != null) ...[
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: _loadLeagues,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF567B37),
+              side: const BorderSide(color: Color(0xFF567B37)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ] else if (_leagues.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 36),
+            child: Text(
+              'No hay liguillas',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Color(0xFF6C737D)),
+            ),
+          )
+        else
+          for (final league in _leagues) ...[
+            _LeagueListItem(
+              league: league,
+              isDeciding: _decidingLeagueId == league.idLiguilla,
+              shouldPulse: _shouldPulseLeague(league),
+              pulseOn: _pendingLeaguePulseOn,
+              canInvite: league.canBeInvitedBy(widget.idUsuario),
+              onAcceptInvitation: () => _sendParticipationDecision(league, 'S'),
+              onRejectInvitation: () => _sendParticipationDecision(league, 'N'),
+              onLeaveAcceptedLeague: () => _confirmLeaveAcceptedLeague(league),
+              onRejoinLeague: () => _sendParticipationDecision(league, 'S'),
+              onViewParticipants: () => _openLeagueParticipants(league),
+              onInvite: () => _openLeagueInvitation(league),
+            ),
+            const SizedBox(height: 10),
+          ],
+      ],
+    );
+  }
+}
+
+class _LeagueListItem extends StatelessWidget {
+  const _LeagueListItem({
+    required this.league,
+    required this.isDeciding,
+    required this.shouldPulse,
+    required this.pulseOn,
+    required this.canInvite,
+    required this.onAcceptInvitation,
+    required this.onRejectInvitation,
+    required this.onLeaveAcceptedLeague,
+    required this.onRejoinLeague,
+    required this.onViewParticipants,
+    required this.onInvite,
+  });
+
+  final _LeagueSummary league;
+  final bool isDeciding;
+  final bool shouldPulse;
+  final bool pulseOn;
+  final bool canInvite;
+  final VoidCallback onAcceptInvitation;
+  final VoidCallback onRejectInvitation;
+  final VoidCallback onLeaveAcceptedLeague;
+  final VoidCallback onRejoinLeague;
+  final VoidCallback onViewParticipants;
+  final VoidCallback onInvite;
+
+  @override
+  Widget build(BuildContext context) {
+    final creator = league.alias.isEmpty ? 'Usuario' : league.alias;
+    final statusLabels = league.statusLabelsWithoutPending;
+
+    final backgroundColor = shouldPulse && pulseOn
+        ? const Color(0xFFFFDADA)
+        : const Color.fromRGBO(255, 255, 255, 0.78);
+
+    return AnimatedContainer(
+      key: ValueKey('league_item_${league.idLiguilla}'),
+      duration: const Duration(seconds: 1),
+      curve: Curves.easeInOut,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD8D2C7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _LeagueTitleLabel(
+            title: league.titulo,
+            emptyTitle: 'Liguilla sin titulo',
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Creada por $creator',
+            style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
+          ),
+          if (league.movil.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Movil: ${league.movil}',
+              style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _LeagueParticipantsButton(onPressed: onViewParticipants),
+                  if (league.isRejected) ...[
+                    const SizedBox(height: 8),
+                    _LeagueRejoinButton(
+                      isLoading: isDeciding,
+                      onPressed: onRejoinLeague,
+                    ),
+                  ],
+                ],
+              ),
+              if (canInvite) _LeagueInviteButton(onPressed: onInvite),
+              if (league.isPending) ...[
+                _LeagueAcceptInvitationButton(
+                  isLoading: isDeciding,
+                  onPressed: onAcceptInvitation,
+                ),
+                _LeagueRejectInvitationButton(
+                  isLoading: isDeciding,
+                  onPressed: onRejectInvitation,
+                ),
+              ],
+              if (!league.isRejected)
+                for (final label in statusLabels)
+                  _LeagueStatusPill(label: label),
+              if (league.isAccepted)
+                _LeagueLeaveButton(
+                  isLoading: isDeciding,
+                  onPressed: onLeaveAcceptedLeague,
+                ),
+            ],
+          ),
+          if (league.isRejected && statusLabels.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Center(child: _LeagueStatusPill(label: statusLabels.first)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueStatusPill extends StatelessWidget {
+  const _LeagueStatusPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF3E9),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD1DDC3)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF486536),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LeagueTitleLabel extends StatelessWidget {
+  const _LeagueTitleLabel({
+    required this.title,
+    required this.emptyTitle,
+    this.textAlign = TextAlign.left,
+    this.mainAxisAlignment = MainAxisAlignment.start,
+  });
+
+  final String title;
+  final String emptyTitle;
+  final TextAlign textAlign;
+  final MainAxisAlignment mainAxisAlignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveTitle = title.trim().isEmpty ? emptyTitle : title.trim();
+
+    return Row(
+      mainAxisAlignment: mainAxisAlignment,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const Icon(Icons.emoji_events, color: Color(0xFFB9834F), size: 21),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            effectiveTitle,
+            textAlign: textAlign,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF545B66),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LeagueParticipantsButton extends StatelessWidget {
+  const _LeagueParticipantsButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF235C3D),
+        side: const BorderSide(color: Color(0xFF8AA879)),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        minimumSize: const Size(0, 34),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: const Icon(Icons.groups, size: 17),
+      label: const Text(
+        'Participantes',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
+class _LeagueInviteButton extends StatelessWidget {
+  const _LeagueInviteButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF567B37),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        minimumSize: const Size(0, 34),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: const Icon(Icons.person_add, size: 17),
+      label: const Text(
+        'Invitar',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
+class _LeagueRejoinButton extends StatelessWidget {
+  const _LeagueRejoinButton({required this.isLoading, required this.onPressed});
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: const Color(0xFF235C3D),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        minimumSize: const Size(0, 32),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: isLoading
+          ? const SizedBox.square(
+              dimension: 13,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.replay, size: 15),
+      label: const Text(
+        'Reapuntarse a la liguilla',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+class _LeagueLeaveButton extends StatelessWidget {
+  const _LeagueLeaveButton({required this.isLoading, required this.onPressed});
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: const Color(0xFF6C737D),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        minimumSize: const Size(0, 32),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: isLoading
+          ? const SizedBox.square(
+              dimension: 13,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.logout, size: 15),
+      label: const Text(
+        'Darse de baja',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+class _LeagueAcceptInvitationButton extends StatelessWidget {
+  const _LeagueAcceptInvitationButton({
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF235C3D),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        minimumSize: const Size(0, 44),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: isLoading
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.check, size: 20),
+      label: const Text(
+        'Aceptar invitación',
+        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
+class _LeagueRejectInvitationButton extends StatelessWidget {
+  const _LeagueRejectInvitationButton({
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF9D433D),
+        side: const BorderSide(color: Color(0xFFC77A72)),
+        backgroundColor: const Color(0xFFFFF1EF),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        minimumSize: const Size(0, 44),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: isLoading
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.close, size: 20),
+      label: const Text(
+        'Rechazar invitación',
+        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
+class _LeagueParticipantsScreen extends StatefulWidget {
+  const _LeagueParticipantsScreen({
+    required this.datosServidorService,
+    required this.league,
+  });
+
+  final DatosServidorService datosServidorService;
+  final _LeagueSummary league;
+
+  @override
+  State<_LeagueParticipantsScreen> createState() =>
+      _LeagueParticipantsScreenState();
+}
+
+class _LeagueParticipantsScreenState extends State<_LeagueParticipantsScreen> {
+  bool _isLoading = true;
+  String? _error;
+  List<_LeagueParticipant> _participants = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadParticipants());
+  }
+
+  Future<void> _loadParticipants() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService
+          .obtenerInvitadosLiguilla(widget.league.idLiguilla);
+      final participants = _leagueParticipantsFromResponse(response);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _participants = participants;
+        _isLoading = false;
+      });
+    } catch (error) {
+      debugPrint('obtenerInvitadosLiguilla fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('obtenerInvitadosLiguilla backend body: ${error.body}');
+      }
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _error = 'No se pudieron cargar los participantes.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final leagueTitle = widget.league.titulo.trim();
+
+    return _ReservationScreenFrame(
+      title: 'Participantes',
+      maxWidth: 680,
+      showBackButton: true,
+      backLabel: 'Volver',
+      children: [
+        if (leagueTitle.isNotEmpty) ...[
+          _LeagueTitleLabel(
+            title: leagueTitle,
+            emptyTitle: 'Liguilla',
+            textAlign: TextAlign.center,
+            mainAxisAlignment: MainAxisAlignment.center,
+          ),
+          const SizedBox(height: 18),
+        ],
+        if (_isLoading)
+          const SizedBox(
+            height: 170,
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFF567B37)),
+            ),
+          )
+        else if (_error != null) ...[
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: _loadParticipants,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF567B37),
+              side: const BorderSide(color: Color(0xFF567B37)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ] else if (_participants.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 36),
+            child: Text(
+              'No hay participantes',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Color(0xFF6C737D)),
+            ),
+          )
+        else
+          for (final participant in _participants) ...[
+            _LeagueParticipantItem(participant: participant),
+            const SizedBox(height: 10),
+          ],
+      ],
+    );
+  }
+}
+
+class _LeagueParticipantItem extends StatelessWidget {
+  const _LeagueParticipantItem({required this.participant});
+
+  final _LeagueParticipant participant;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(255, 255, 255, 0.78),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD8D2C7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            participant.alias.isEmpty ? 'Sin alias' : participant.alias,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF545B66),
+            ),
+          ),
+          if (participant.movil.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Movil: ${participant.movil}',
+              style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Center(child: _LeagueStatusPill(label: participant.statusLabel)),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueInvitationScreen extends StatefulWidget {
+  const _LeagueInvitationScreen({
+    required this.datosServidorService,
+    required this.league,
+    required this.idUsuario,
+  });
+
+  final DatosServidorService datosServidorService;
+  final _LeagueSummary league;
+  final String idUsuario;
+
+  @override
+  State<_LeagueInvitationScreen> createState() =>
+      _LeagueInvitationScreenState();
+}
+
+class _LeagueInvitationScreenState extends State<_LeagueInvitationScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _mobileController = TextEditingController();
+  bool _isSending = false;
+  String? _inviteError;
+
+  @override
+  void dispose() {
+    _mobileController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitInvitation() async {
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    setState(() {
+      _isSending = true;
+      _inviteError = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.enviaInvitacion(
+        idLiguilla: widget.league.idLiguilla,
+        movil: _mobileController.text.trim(),
+        invitadorPor: widget.idUsuario,
+      );
+      debugPrint('enviaInvitacion: $response');
+      if (!_backendResponseIsOk(response)) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _inviteError = _backendResponseMessage(response);
+          _isSending = false;
+        });
+        return;
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      debugPrint('enviaInvitacion fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        final backendBody = error is DatosServidorException
+            ? error.body.trim()
+            : '';
+        _inviteError = backendBody.isNotEmpty
+            ? _backendResponseMessage(backendBody)
+            : error.toString();
+        _isSending = false;
+      });
+    }
+  }
+
+  String? _requiredMobile(String? value) {
+    return (value?.trim().isEmpty ?? true) ? 'Campo obligatorio' : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final leagueTitle = widget.league.titulo.trim();
+
+    return _ReservationScreenFrame(
+      title: 'Invitacion',
+      maxWidth: 560,
+      showBackButton: true,
+      backLabel: 'Cancelar',
+      children: [
+        if (leagueTitle.isNotEmpty) ...[
+          _LeagueTitleLabel(
+            title: leagueTitle,
+            emptyTitle: 'Liguilla',
+            textAlign: TextAlign.center,
+            mainAxisAlignment: MainAxisAlignment.center,
+          ),
+          const SizedBox(height: 18),
+        ],
+        Form(
+          key: _formKey,
+          child: TextFormField(
+            controller: _mobileController,
+            keyboardType: TextInputType.phone,
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
+              LengthLimitingTextInputFormatter(11),
+            ],
+            validator: _requiredMobile,
+            decoration: InputDecoration(
+              labelText: 'Movil',
+              filled: true,
+              fillColor: const Color.fromRGBO(255, 255, 255, 0.72),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Color(0xFFD8D2C7)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Color(0xFF567B37),
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_inviteError != null) ...[
+          const SizedBox(height: 14),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 170),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF1EF),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE0A39E)),
+            ),
+            child: SingleChildScrollView(
+              child: Text(
+                _inviteError!,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF9D433D),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 22),
+        FilledButton.icon(
+          onPressed: _isSending ? null : _submitInvitation,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF567B37),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: _isSending
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.send),
+          label: Text(_isSending ? 'Invitando...' : 'Invitar'),
+        ),
+      ],
+    );
+  }
+}
+
+class _CreateLeagueScreen extends StatefulWidget {
+  const _CreateLeagueScreen({
+    required this.datosServidorService,
+    required this.idUsuario,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String idUsuario;
+
+  @override
+  State<_CreateLeagueScreen> createState() => _CreateLeagueScreenState();
+}
+
+class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _roundsController = TextEditingController();
+  final _minimumPlayersController = TextEditingController();
+  final _minimumPlayerParticipationController = TextEditingController();
+  final _invitationMessageController = TextEditingController();
+  bool _roundsAreUndefined = false;
+  bool _minimumPlayersAreUndefined = false;
+  bool _playersCanInvite = true;
+  bool _hostParticipates = true;
+  bool _isSaving = false;
+  String? _saveError;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _roundsController.dispose();
+    _minimumPlayersController.dispose();
+    _minimumPlayerParticipationController.dispose();
+    _invitationMessageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveLeague() async {
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+      _saveError = null;
+    });
+
+    var shouldResetSaving = true;
+    try {
+      final response = await widget.datosServidorService.crearLiguilla(
+        idUsuario: widget.idUsuario,
+        titulo: _titleController.text.trim(),
+        jornadas: _roundsAreUndefined ? '-1' : _roundsController.text.trim(),
+        minimoJugadoresJornada: _minimumPlayersAreUndefined
+            ? '-1'
+            : _minimumPlayersController.text.trim(),
+        participacionMinimaJugador: _minimumPlayerParticipationController.text
+            .trim(),
+        puedenInvitar: _playersCanInvite ? '1' : '0',
+        participaAnfitrion: _hostParticipates ? 'S' : 'N',
+        mensajeInvitacion: _invitationMessageController.text.trim(),
+      );
+      debugPrint('crearLiguilla: $response');
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      shouldResetSaving = false;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      debugPrint('crearLiguilla fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('crearLiguilla backend body: ${error.body}');
+      }
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _saveError = 'No se pudo crear la liguilla.';
+      });
+    } finally {
+      if (mounted && shouldResetSaving) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  void _showHelp(String title, String message) {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Entendido'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _helpButton({required String title, required String message}) {
+    return IconButton(
+      onPressed: () => _showHelp(title, message),
+      tooltip: 'Ayuda',
+      icon: const Text(
+        '?',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+      ),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  InputDecoration _inputDecoration({
+    required String label,
+    required String helpTitle,
+    required String helpMessage,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      suffixIcon: _helpButton(title: helpTitle, message: helpMessage),
+      filled: true,
+      fillColor: const Color.fromRGBO(255, 255, 255, 0.72),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFD8D2C7)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF567B37), width: 2),
+      ),
+    );
+  }
+
+  String? _requiredText(String? value) {
+    return (value?.trim().isEmpty ?? true) ? 'Campo obligatorio' : null;
+  }
+
+  String? _oneOrTwoDigitNumber(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) {
+      return 'Campo obligatorio';
+    }
+
+    final number = int.tryParse(text);
+    if (number == null || number < 1 || number > 99) {
+      return 'Debe estar entre 1 y 99';
+    }
+
+    return null;
+  }
+
+  Widget _undefinedToggle({
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+  }) {
+    return CheckboxListTile(
+      value: value,
+      onChanged: onChanged,
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.leading,
+      title: const Text('Indefinido'),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReservationScreenFrame(
+      title: 'Crear Liguilla',
+      maxWidth: 620,
+      showBackButton: true,
+      children: [
+        Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                controller: _titleController,
+                inputFormatters: const [_UpperCaseTextInputFormatter()],
+                validator: _requiredText,
+                decoration: _inputDecoration(
+                  label: 'Titulo de liguilla',
+                  helpTitle: 'Titulo de liguilla',
+                  helpMessage:
+                      'Es el nombre con el que los jugadores reconocerán la liguilla. '
+                      'Conviene que sea corto y claro.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _roundsController,
+                enabled: !_roundsAreUndefined,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: _roundsAreUndefined ? null : _oneOrTwoDigitNumber,
+                decoration: _inputDecoration(
+                  label: 'Jornadas',
+                  helpTitle: 'Jornadas',
+                  helpMessage:
+                      'Indica cuántas jornadas tendrá la liguilla. Si aún no hay '
+                      'un final previsto, marca Indefinido.',
+                ),
+              ),
+              _undefinedToggle(
+                value: _roundsAreUndefined,
+                onChanged: (value) {
+                  setState(() {
+                    _roundsAreUndefined = value ?? false;
+                    if (_roundsAreUndefined) {
+                      _roundsController.clear();
+                    }
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _minimumPlayersController,
+                enabled: !_minimumPlayersAreUndefined,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: _minimumPlayersAreUndefined
+                    ? null
+                    : _oneOrTwoDigitNumber,
+                decoration: _inputDecoration(
+                  label: 'Minimo jugadores jornada',
+                  helpTitle: 'Minimo jugadores jornada',
+                  helpMessage:
+                      'Define cuántos jugadores deben participar como mínimo para '
+                      'que una jornada compute en la liguilla. Si no quieres fijar '
+                      'ese límite, marca Indefinido.',
+                ),
+              ),
+              _undefinedToggle(
+                value: _minimumPlayersAreUndefined,
+                onChanged: (value) {
+                  setState(() {
+                    _minimumPlayersAreUndefined = value ?? false;
+                    if (_minimumPlayersAreUndefined) {
+                      _minimumPlayersController.clear();
+                    }
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _minimumPlayerParticipationController,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: _oneOrTwoDigitNumber,
+                decoration: _inputDecoration(
+                  label: 'Participacion minima jugador',
+                  helpTitle: 'Participacion minima jugador',
+                  helpMessage:
+                      'Indica en cuántas jornadas como mínimo debe participar '
+                      'cada jugador para que su clasificación cuente en la liguilla.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              _LeagueChoiceField(
+                label: 'Pueden invitar',
+                value: _playersCanInvite,
+                onChanged: (value) {
+                  setState(() {
+                    _playersCanInvite = value;
+                  });
+                },
+                helpButton: _helpButton(
+                  title: 'Pueden invitar',
+                  message:
+                      'Si está en Sí, los jugadores podrán invitar a otros. '
+                      'Si está en No, solo podrá añadir jugadores quien organice.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _invitationMessageController,
+                validator: _requiredText,
+                minLines: 3,
+                maxLines: 5,
+                decoration: _inputDecoration(
+                  label: 'Mensaje invitacion',
+                  helpTitle: 'Mensaje invitacion',
+                  helpMessage:
+                      'Texto que se usará como base para invitar por WhatsApp. '
+                      'Puedes incluir el tono, reglas o indicaciones de la liguilla.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              _LeagueChoiceField(
+                label: '¿ Participas tu en el torneo ?',
+                value: _hostParticipates,
+                onChanged: (value) {
+                  setState(() {
+                    _hostParticipates = value;
+                  });
+                },
+                helpButton: _helpButton(
+                  title: '¿ Participas tu en el torneo ?',
+                  message:
+                      'Marca Sí si además de organizar la liguilla también vas '
+                      'a jugarla. Marca No si solo la estás creando para otros jugadores.',
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_saveError != null) ...[
+          const SizedBox(height: 14),
+          Text(
+            _saveError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+        ],
+        const SizedBox(height: 22),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF6B432D),
+                  side: const BorderSide(color: Color(0xFF6B432D)),
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                ),
+                icon: const Icon(Icons.close),
+                label: const Text('Cancelar'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _isSaving ? null : _saveLeague,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF567B37),
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                ),
+                icon: _isSaving
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.save),
+                label: Text(_isSaving ? 'Guardando...' : 'Guardar'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _LeagueChoiceField extends StatelessWidget {
+  const _LeagueChoiceField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    required this.helpButton,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final Widget helpButton;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: label,
+        suffixIcon: helpButton,
+        filled: true,
+        fillColor: const Color.fromRGBO(255, 255, 255, 0.72),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFD8D2C7)),
+        ),
+      ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(value: true, label: Text('Si')),
+            ButtonSegment(value: false, label: Text('No')),
+          ],
+          selected: {value},
+          onSelectionChanged: (selection) => onChanged(selection.first),
+          showSelectedIcon: false,
+        ),
+      ),
+    );
+  }
+}
+
+class _UpperCaseTextInputFormatter extends TextInputFormatter {
+  const _UpperCaseTextInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    return newValue.copyWith(text: newValue.text.toUpperCase());
+  }
+}
+
 class _UserInformationScreen extends StatefulWidget {
   const _UserInformationScreen({
     required this.initialInformation,
@@ -3743,7 +5632,17 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       return;
     }
 
-    final registration = await _registerUserInBackend(information);
+    final registration = await _saveUserInBackend(information);
+    if (!mounted) {
+      return;
+    }
+    if (registration == null) {
+      setState(() {
+        _isSaving = false;
+      });
+      return;
+    }
+
     await widget.onSave(
       information,
       isRegistered: registration.isRegistered,
@@ -3761,6 +5660,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
   _UserInformation get _currentInformation {
     return _UserInformation(
+      idUsuario: widget.initialInformation?.idUsuario ?? '',
       alias: _text('alias'),
       nombre: _text('nombre'),
       apellidos: _text('apellidos'),
@@ -3797,6 +5697,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
     return {
       for (final field in _userInformationFields)
         if (_backendUniqueFieldKeys.contains(field.key) &&
+            field.key != 'telefono' &&
             _localValidationError(field, _controllers[field.key]?.text) == null)
           field.key,
     };
@@ -3804,6 +5705,9 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
   Future<void> _validateBackendFieldOnBlur(String key) async {
     if (!_backendUniqueFieldKeys.contains(key) || _isSaving) {
+      return;
+    }
+    if (key == 'telefono') {
       return;
     }
 
@@ -3900,10 +5804,38 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
     return errors;
   }
 
-  Future<_UserRegistrationResult> _registerUserInBackend(
+  Future<_UserRegistrationResult?> _saveUserInBackend(
     _UserInformation information,
   ) async {
+    var operation = 'altaUsuario';
     try {
+      final editUserId = await _userIdForMobileBeforeSave(information);
+      if (editUserId == null) {
+        return null;
+      }
+
+      if (editUserId.isNotEmpty) {
+        operation = 'editaUsuario';
+        final response = await widget.datosServidorService.editaUsuario(
+          editUserId,
+          information.alias,
+          information.nombre,
+          information.apellidos,
+          information.direccion,
+          information.cp,
+          information.poblacion,
+          information.provincia,
+          information.telefono,
+          information.mail,
+          information.numeroFederadoGolf,
+        );
+        debugPrint('editaUsuario(${information.alias}): $response');
+        return _UserRegistrationResult(
+          isRegistered: _backendResponseIsOk(response),
+          idUsuario: editUserId,
+        );
+      }
+
       final response = await widget.datosServidorService.altaUsuario(
         information.alias,
         information.nombre,
@@ -3920,9 +5852,63 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       debugPrint('altaUsuario(${information.alias}): $response');
       return registration;
     } catch (error) {
-      debugPrint('altaUsuario(${information.alias}) fallo: $error');
-      return const _UserRegistrationResult(isRegistered: false);
+      debugPrint('$operation(${information.alias}) fallo: $error');
+      return _UserRegistrationResult(
+        isRegistered: false,
+        idUsuario: information.idUsuario.trim(),
+      );
     }
+  }
+
+  Future<String?> _userIdForMobileBeforeSave(
+    _UserInformation information,
+  ) async {
+    final currentUserId = information.idUsuario.trim();
+    final response = await widget.datosServidorService.yaExisteMovilUsuario(
+      information.telefono,
+    );
+    debugPrint('yaExisteMovilUsuario(${information.telefono}): $response');
+
+    final exists = _backendResponseSaysYes(response);
+    if (!exists) {
+      return currentUserId;
+    }
+
+    final backendUserId = _backendResponseField(response, 'idUsuario') ?? '';
+    if (backendUserId.isEmpty || backendUserId == currentUserId) {
+      return currentUserId;
+    }
+
+    final confirmed = await _showOverwriteMobileUserDialog();
+    if (!mounted || confirmed != true) {
+      return null;
+    }
+
+    return backendUserId;
+  }
+
+  Future<bool?> _showOverwriteMobileUserDialog() {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          content: const Text(
+            'este movil ya existe, se sobreescribiran los datos de usuario',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancela'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Adelante'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showServerValidationSnackBar(String message) {
@@ -4307,6 +6293,32 @@ bool _backendResponseIsOk(String response) {
   return _backendResponseValue(response) == 'ok';
 }
 
+String _backendResponseMessage(String response) {
+  final rpta = _backendResponseField(response, 'rpta');
+  if (rpta != null && rpta.isNotEmpty) {
+    final normalizedRpta = rpta.toLowerCase();
+    if (normalizedRpta != 'ok' && normalizedRpta != 'ko') {
+      return rpta;
+    }
+  }
+
+  for (final key in const ['mensaje', 'msg', 'error', 'descripcion']) {
+    final value = _backendResponseField(response, key);
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  if (rpta != null && rpta.isNotEmpty) {
+    return rpta;
+  }
+
+  final trimmedResponse = response.trim();
+  return trimmedResponse.isEmpty
+      ? 'Respuesta vacia del backend.'
+      : trimmedResponse;
+}
+
 _UserRegistrationResult _userRegistrationResultFromBackend(String response) {
   final rpta = _backendResponseValue(response);
   if (rpta != 'ok') {
@@ -4327,6 +6339,258 @@ class _UserRegistrationResult {
 
   final bool isRegistered;
   final String idUsuario;
+}
+
+class _PendingLeagueInvitations {
+  const _PendingLeagueInvitations({
+    required this.invitations,
+    required this.leagues,
+  });
+
+  const _PendingLeagueInvitations.empty() : invitations = 0, leagues = const [];
+
+  final int invitations;
+  final List<_PendingLeagueInvitationSummary> leagues;
+
+  bool get hasPending => invitations > 0;
+
+  Set<String> get leagueIds => {
+    for (final league in leagues)
+      if (league.idLiguilla.isNotEmpty) league.idLiguilla,
+  };
+
+  static _PendingLeagueInvitations fromPayload(Object? payload) {
+    if (payload is List && payload.isNotEmpty) {
+      return fromPayload(payload.first);
+    }
+
+    if (payload is! Map) {
+      return const _PendingLeagueInvitations.empty();
+    }
+
+    final map = _stringKeyedMap(payload);
+    final leaguesPayload = map['liguillas'];
+    final leagueRows = _decodeMapRows(leaguesPayload, 0) ?? const [];
+    final leagues = [
+      for (final row in leagueRows)
+        ?_PendingLeagueInvitationSummary.fromMap(row),
+    ];
+    final invitationCount = _intFromBackendValue(map['invitaciones']);
+
+    return _PendingLeagueInvitations(
+      invitations: invitationCount ?? leagues.length,
+      leagues: leagues,
+    );
+  }
+}
+
+class _PendingLeagueInvitationSummary {
+  const _PendingLeagueInvitationSummary({
+    required this.idLiguilla,
+    required this.titulo,
+    required this.aliasCreador,
+    required this.movilCreador,
+  });
+
+  final String idLiguilla;
+  final String titulo;
+  final String aliasCreador;
+  final String movilCreador;
+
+  static _PendingLeagueInvitationSummary? fromMap(Map<String, dynamic> map) {
+    final idLiguilla = '${map['idLiguilla'] ?? ''}'.trim();
+    final titulo = '${map['titulo'] ?? ''}'.trim();
+    if (idLiguilla.isEmpty && titulo.isEmpty) {
+      return null;
+    }
+
+    return _PendingLeagueInvitationSummary(
+      idLiguilla: idLiguilla,
+      titulo: titulo,
+      aliasCreador: '${map['alias_creador'] ?? map['alias'] ?? ''}'.trim(),
+      movilCreador: '${map['movil_creador'] ?? map['movil'] ?? ''}'.trim(),
+    );
+  }
+}
+
+_PendingLeagueInvitations _pendingLeagueInvitationsFromResponse(
+  String response,
+) {
+  final trimmedResponse = response.trim();
+  final decoded =
+      _decodeJsonLikePayload(trimmedResponse) ??
+      _decodeBracketWrappedMapPayload(trimmedResponse);
+  return _PendingLeagueInvitations.fromPayload(decoded);
+}
+
+class _LeagueSummary {
+  const _LeagueSummary({
+    required this.idLiguilla,
+    required this.titulo,
+    required this.alias,
+    required this.movil,
+    required this.pendienteDecidir,
+    required this.acabada,
+    required this.fechaRechazo,
+    required this.puedenInvitar,
+    required this.creador,
+    required this.invitadoPor,
+  });
+
+  final String idLiguilla;
+  final String titulo;
+  final String alias;
+  final String movil;
+  final String pendienteDecidir;
+  final String acabada;
+  final String fechaRechazo;
+  final String puedenInvitar;
+  final String creador;
+  final String invitadoPor;
+
+  bool get isPending => pendienteDecidir.trim().toUpperCase() == 'S';
+  bool get isFinished => acabada.trim().isNotEmpty;
+  bool get isRejected => _backendDateLikeValueIsSet(fechaRechazo);
+
+  bool get isAccepted => !isPending && !isRejected && !isFinished;
+  bool get isActive => !isRejected && !isFinished;
+  bool get playersCanInvite => puedenInvitar.trim() == '1';
+
+  bool canBeInvitedBy(String idUsuario) {
+    return !isPending &&
+        !isRejected &&
+        isActive &&
+        (playersCanInvite || creador.trim() == idUsuario.trim());
+  }
+
+  bool isVisibleFor(String idUsuario) {
+    final currentUserId = idUsuario.trim();
+    return !isRejected ||
+        (currentUserId.isNotEmpty && invitadoPor.trim() == currentUserId);
+  }
+
+  _LeagueSummary copyWith({
+    String? pendienteDecidir,
+    String? acabada,
+    String? fechaRechazo,
+  }) {
+    return _LeagueSummary(
+      idLiguilla: idLiguilla,
+      titulo: titulo,
+      alias: alias,
+      movil: movil,
+      pendienteDecidir: pendienteDecidir ?? this.pendienteDecidir,
+      acabada: acabada ?? this.acabada,
+      fechaRechazo: fechaRechazo ?? this.fechaRechazo,
+      puedenInvitar: puedenInvitar,
+      creador: creador,
+      invitadoPor: invitadoPor,
+    );
+  }
+
+  List<String> get statusLabelsWithoutPending {
+    final rejectedAt = fechaRechazo.trim();
+    return [
+      if (isRejected)
+        rejectedAt.toUpperCase() == 'S'
+            ? 'Rechazada'
+            : 'Rechazada ${_statisticsDateLabel(rejectedAt)}'
+      else if (isFinished)
+        'Acabada ${_statisticsDateLabel(acabada)}',
+    ];
+  }
+
+  static _LeagueSummary? fromMap(Map<String, dynamic> map) {
+    final idLiguilla = '${map['idLiguilla'] ?? ''}'.trim();
+    final titulo = '${map['titulo'] ?? ''}'.trim();
+    if (idLiguilla.isEmpty && titulo.isEmpty) {
+      return null;
+    }
+
+    return _LeagueSummary(
+      idLiguilla: idLiguilla,
+      titulo: titulo,
+      alias: '${map['alias'] ?? ''}'.trim(),
+      movil: '${map['movil'] ?? ''}'.trim(),
+      pendienteDecidir: '${map['pendiente_decidir'] ?? ''}'.trim(),
+      acabada: '${map['acabada'] ?? ''}'.trim(),
+      fechaRechazo: '${map['fecha_rechazo'] ?? map['rechazada'] ?? ''}'.trim(),
+      puedenInvitar: '${map['pueden_invitar'] ?? ''}'.trim(),
+      creador: '${map['creador'] ?? ''}'.trim(),
+      invitadoPor: '${map['invitado_por'] ?? map['invitador_por'] ?? ''}'
+          .trim(),
+    );
+  }
+}
+
+List<_LeagueSummary> _leaguesFromResponse(String response) {
+  final rows = _decodeMapRows(response, 0) ?? const [];
+  return [for (final row in rows) ?_LeagueSummary.fromMap(row)];
+}
+
+class _LeagueParticipant {
+  const _LeagueParticipant({
+    required this.idUsuario,
+    required this.alias,
+    required this.movil,
+    required this.fechaAceptacion,
+    required this.fechaRechazo,
+    required this.pendienteDecidir,
+  });
+
+  final String idUsuario;
+  final String alias;
+  final String movil;
+  final String fechaAceptacion;
+  final String fechaRechazo;
+  final String pendienteDecidir;
+
+  bool get isPending => pendienteDecidir.trim().toUpperCase() == 'S';
+  bool get hasAccepted => _backendDateLikeValueIsSet(fechaAceptacion);
+  bool get hasRejected => _backendDateLikeValueIsSet(fechaRechazo);
+
+  String get statusLabel {
+    if (isPending) {
+      return 'Pendiente de decidir';
+    }
+
+    if (hasRejected) {
+      return 'No participa';
+    }
+
+    if (hasAccepted) {
+      return 'Participa';
+    }
+
+    return 'Sin decision';
+  }
+
+  static _LeagueParticipant? fromMap(Map<String, dynamic> map) {
+    final alias = '${map['alias'] ?? ''}'.trim();
+    final idUsuario = '${map['idUsuario'] ?? ''}'.trim();
+    if (alias.isEmpty && idUsuario.isEmpty) {
+      return null;
+    }
+
+    return _LeagueParticipant(
+      idUsuario: idUsuario,
+      alias: alias,
+      movil: '${map['movil'] ?? ''}'.trim(),
+      fechaAceptacion: '${map['fecha_aceptacion'] ?? ''}'.trim(),
+      fechaRechazo: '${map['fecha_rechazo'] ?? ''}'.trim(),
+      pendienteDecidir: '${map['pendiente_decidir'] ?? ''}'.trim(),
+    );
+  }
+}
+
+List<_LeagueParticipant> _leagueParticipantsFromResponse(String response) {
+  final rows = _decodeMapRows(response, 0) ?? const [];
+  return [for (final row in rows) ?_LeagueParticipant.fromMap(row)];
+}
+
+bool _backendDateLikeValueIsSet(String value) {
+  final normalized = value.trim().toUpperCase();
+  return normalized.isNotEmpty && normalized != 'N';
 }
 
 String? _backendResponseValue(String response) {
@@ -4596,34 +6860,214 @@ List<Object?> _statisticsRoundPayloads(Object? payload, int depth) {
 
 List<String> _statisticsHandicapValuesFromResponse(String response) {
   final decoded = _decodeJsonLikePayload(response.trim()) ?? response;
-  var rows = _decodeMapRows(decoded, 0);
+  final values = _statisticsHandicapValuesFromPayload(decoded);
+  if (values.isNotEmpty) {
+    return values;
+  }
 
-  if (rows == null) {
-    final valor = _extractWrappedBackendField(response, 'valor');
-    if (valor != null) {
-      rows = _decodeMapRows(valor, 0);
+  final valor = _extractWrappedBackendField(response, 'valor');
+  return valor == null ? const [] : _statisticsHandicapValuesFromPayload(valor);
+}
+
+List<String> _statisticsHandicapValuesFromPayload(Object? payload) {
+  return _statisticsHandicapValuesFromPayloadValue(payload, 0);
+}
+
+List<String> _statisticsHandicapValuesFromPayloadValue(
+  Object? payload,
+  int depth,
+) {
+  if (depth > 5 || payload == null) {
+    return const [];
+  }
+
+  if (payload is String) {
+    final trimmedPayload = payload.trim();
+    if (trimmedPayload.isEmpty) {
+      return const [];
+    }
+
+    for (final fieldName in const [
+      'configuracion_tarjeta',
+      'configuracionTarjeta',
+      'valor',
+    ]) {
+      final wrappedField = _extractWrappedBackendField(
+        trimmedPayload,
+        fieldName,
+      );
+      if (wrappedField == null) {
+        continue;
+      }
+
+      final values = _statisticsHandicapValuesFromPayloadValue(
+        wrappedField,
+        depth + 1,
+      );
+      if (values.isNotEmpty) {
+        return values;
+      }
+    }
+
+    final decoded = _decodeJsonLikePayload(trimmedPayload);
+    return decoded == null
+        ? const []
+        : _statisticsHandicapValuesFromPayloadValue(decoded, depth + 1);
+  }
+
+  if (payload is List) {
+    final rows = payload.whereType<Map>().map(_stringKeyedMap).toList();
+    final values = _statisticsHandicapValuesFromRows(rows);
+    if (values.isNotEmpty) {
+      return values;
+    }
+
+    for (final item in payload) {
+      final nestedValues = _statisticsHandicapValuesFromPayloadValue(
+        item,
+        depth + 1,
+      );
+      if (nestedValues.isNotEmpty) {
+        return nestedValues;
+      }
     }
   }
 
-  final holeRows = [...?rows];
+  if (payload is Map) {
+    final map = _stringKeyedMap(payload);
+    final values = _statisticsHandicapValuesFromRows([map]);
+    if (values.isNotEmpty) {
+      return values;
+    }
+
+    for (final key in const [
+      'configuracion_tarjeta',
+      'configuracionTarjeta',
+      'configuracion_tarjeta_json',
+      'configuracionTarjetaJson',
+      'configuracion',
+      'valor',
+      'json',
+      'data',
+    ]) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
+
+      final nestedValues = _statisticsHandicapValuesFromPayloadValue(
+        map[key],
+        depth + 1,
+      );
+      if (nestedValues.isNotEmpty) {
+        return nestedValues;
+      }
+    }
+  }
+
+  return const [];
+}
+
+List<String> _statisticsHandicapValuesFromRows(
+  List<Map<String, dynamic>> rows,
+) {
+  final holeRows = [
+    for (final entry in rows.asMap().entries)
+      if (_statisticsHandicapValue(entry.value).isNotEmpty)
+        _IndexedStatisticsHoleConfiguration(
+          index: entry.key,
+          hole: _statisticsHoleNumber(entry.value, entry.key),
+          handicap: _statisticsHandicapValue(entry.value),
+        ),
+  ];
+  if (holeRows.isEmpty) {
+    return const [];
+  }
+
   holeRows.sort((left, right) {
-    final leftHole = int.tryParse('${left['hoyo'] ?? ''}'.trim()) ?? 0;
-    final rightHole = int.tryParse('${right['hoyo'] ?? ''}'.trim()) ?? 0;
-    return leftHole.compareTo(rightHole);
+    if (left.hole == right.hole) {
+      return left.index.compareTo(right.index);
+    }
+
+    return left.hole.compareTo(right.hole);
   });
 
-  return [
-    for (final row in holeRows.take(18)) '${row['handicap'] ?? ''}'.trim(),
-  ];
+  return [for (final row in holeRows.take(18)) row.handicap];
+}
+
+String _statisticsHandicapValue(Map<String, dynamic> row) {
+  for (final key in const [
+    'handicap',
+    'hcp',
+    'HCP',
+    'handicap_hoyo',
+    'handicapHoyo',
+  ]) {
+    final value = '${row[key] ?? ''}'.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+int _statisticsHoleNumber(Map<String, dynamic> row, int fallbackIndex) {
+  for (final key in const ['hoyo', 'hole', 'numero_hoyo', 'numeroHoyo']) {
+    final value = int.tryParse('${row[key] ?? ''}'.trim());
+    if (value != null && value > 0) {
+      return value;
+    }
+  }
+
+  return fallbackIndex + 1;
 }
 
 String? _extractWrappedBackendField(String rawResponse, String fieldName) {
-  final match = RegExp(
-    '^\\{"rpta":"[^"]*","$fieldName":"(.*)"\\}\$',
-    dotAll: true,
-  ).firstMatch(rawResponse.trim());
+  final decoded = _decodeJsonLikePayload(rawResponse.trim());
+  if (decoded is Map) {
+    final map = _stringKeyedMap(decoded);
+    final value = map[fieldName];
+    if (value != null) {
+      return value is String ? value : jsonEncode(value);
+    }
+  }
 
-  return match?.group(1);
+  return _extractMalformedBackendStringField(rawResponse, fieldName);
+}
+
+String? _extractMalformedBackendStringField(
+  String rawResponse,
+  String fieldName,
+) {
+  final trimmedResponse = rawResponse.trim();
+  final fieldMatch = RegExp(
+    '"${RegExp.escape(fieldName)}"\\s*:\\s*"',
+  ).firstMatch(trimmedResponse);
+  if (fieldMatch == null) {
+    return null;
+  }
+
+  final valueStart = fieldMatch.end;
+  for (var index = valueStart; index < trimmedResponse.length; index++) {
+    if (trimmedResponse.codeUnitAt(index) != 0x22) {
+      continue;
+    }
+
+    if (index > valueStart && trimmedResponse.codeUnitAt(index - 1) == 0x5C) {
+      continue;
+    }
+
+    final tail = trimmedResponse.substring(index + 1);
+    final isFieldBoundary = RegExp(
+      r'^\s*(?:,\s*"[^"]+"\s*:|\}\s*$)',
+      dotAll: true,
+    ).hasMatch(tail);
+    if (isFieldBoundary) {
+      return trimmedResponse.substring(valueStart, index);
+    }
+  }
+
+  return null;
 }
 
 List<Map<String, dynamic>>? _decodeAgendaRows(Object? payload, int depth) {
@@ -4651,7 +7095,14 @@ List<Map<String, dynamic>>? _decodeMapRows(Object? payload, int depth) {
 
   if (payload is Map) {
     final map = _stringKeyedMap(payload);
-    for (final key in const ['agenda', 'jugadores', 'data', 'valor', 'json']) {
+    for (final key in const [
+      'agenda',
+      'jugadores',
+      'liguillas',
+      'data',
+      'valor',
+      'json',
+    ]) {
       if (!map.containsKey(key)) {
         continue;
       }
@@ -4678,6 +7129,34 @@ Object? _decodeJsonLikePayload(String rawPayload) {
   } catch (_) {
     return null;
   }
+}
+
+Object? _decodeBracketWrappedMapPayload(String rawPayload) {
+  final trimmedPayload = rawPayload.trim();
+  if (trimmedPayload.length < 2 ||
+      !trimmedPayload.startsWith('[') ||
+      !trimmedPayload.endsWith(']')) {
+    return null;
+  }
+
+  final innerPayload = trimmedPayload.substring(1, trimmedPayload.length - 1);
+  if (innerPayload.trimLeft().startsWith('{')) {
+    return null;
+  }
+
+  return _decodeJsonLikePayload('{$innerPayload}');
+}
+
+int? _intFromBackendValue(Object? value) {
+  if (value is int) {
+    return value;
+  }
+
+  if (value is num) {
+    return value.toInt();
+  }
+
+  return int.tryParse('${value ?? ''}'.trim());
 }
 
 int? _parseTimeInput(String? rawValue) {
@@ -4961,14 +7440,22 @@ class _GolfPositionPayload {
 
 class _StatisticsRound {
   const _StatisticsRound({
+    required this.idPartida,
     required this.dateLabel,
     required this.sortValue,
     required this.holeValues,
+    required this.handicapValues,
+    required this.jugadores,
+    required this.playRowsJson,
   });
 
+  final String idPartida;
   final String dateLabel;
   final int sortValue;
   final List<String> holeValues;
+  final List<String> handicapValues;
+  final String jugadores;
+  final String playRowsJson;
 
   static _StatisticsRound? fromPayload(
     Object? payload, {
@@ -5006,9 +7493,13 @@ class _StatisticsRound {
         _statisticsDateValue(payload) ?? _statisticsDateValue(userRow) ?? '';
 
     return _StatisticsRound(
+      idPartida: _statisticsGameIdValue(payload),
       dateLabel: _statisticsDateLabel(rawDate),
       sortValue: _statisticsDateSortValue(rawDate),
       holeValues: holeValues,
+      handicapValues: _statisticsHandicapValuesFromPayload(payload),
+      jugadores: rows.length.toString(),
+      playRowsJson: jsonEncode(rows),
     );
   }
 }
@@ -5070,6 +7561,32 @@ bool _statisticsRowBelongsToAlias(Map<String, dynamic> row, String alias) {
       '${row['jugador'] ?? row['alias'] ?? row['allias'] ?? row['Alias'] ?? ''}'
           .trim();
   return rowAlias.isNotEmpty && rowAlias == alias.trim();
+}
+
+String _statisticsGameIdValue(Object? payload) {
+  if (payload is String) {
+    final decoded = _decodeJsonLikePayload(payload.trim());
+    return decoded == null ? '' : _statisticsGameIdValue(decoded);
+  }
+
+  if (payload is! Map) {
+    return '';
+  }
+
+  final map = _stringKeyedMap(payload);
+  for (final key in const [
+    'idPartida',
+    'id_partida',
+    'idpartida',
+    'partida_id',
+  ]) {
+    final value = '${map[key] ?? ''}'.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  return '';
 }
 
 String? _statisticsDateValue(Object? payload) {
@@ -5151,6 +7668,54 @@ int _statisticsDateSortValue(String rawDate) {
 
 String _statisticsHoleValue(List<String> values, int holeIndex) {
   return holeIndex < values.length ? values[holeIndex] : '';
+}
+
+String _statisticsHandicapDifference(
+  List<String> scoreValues,
+  List<String> handicapValues,
+) {
+  var total = 0;
+  var hasValue = false;
+
+  for (var index = 0; index < 18; index++) {
+    final score = int.tryParse(_statisticsHoleValue(scoreValues, index).trim());
+    final handicap = int.tryParse(
+      _statisticsHoleValue(handicapValues, index).trim(),
+    );
+    if (score == null || handicap == null) {
+      continue;
+    }
+
+    total += score - handicap;
+    hasValue = true;
+  }
+
+  if (!hasValue) {
+    return '';
+  }
+
+  return total > 0 ? '+$total' : '$total';
+}
+
+_StatisticsCellResult? _statisticsDifferenceResult(String value) {
+  final difference = int.tryParse(value.trim());
+  if (difference == null) {
+    return null;
+  }
+
+  if (difference < 0) {
+    return _StatisticsCellResult.underHandicap;
+  }
+
+  if (difference == 0) {
+    return _StatisticsCellResult.equalHandicap;
+  }
+
+  if (difference == 1) {
+    return _StatisticsCellResult.oneOverHandicap;
+  }
+
+  return _StatisticsCellResult.overOneOverHandicap;
 }
 
 _StatisticsCellResult? _statisticsCellResult(
@@ -5370,12 +7935,28 @@ List<Map<String, dynamic>>? _decodePlayRowsPayloadValue(
 }
 
 String? _extractWrappedPlayRowsJson(String rawResponse) {
-  final match = RegExp(
-    r'^\{"rpta":"[^"]*","json_hoyos":"(.*)"\}$',
-    dotAll: true,
-  ).firstMatch(rawResponse);
+  final decoded = _decodeJsonLikePayload(rawResponse.trim());
+  if (decoded is Map) {
+    final map = _stringKeyedMap(decoded);
+    final value = map['json_hoyos'] ?? map['jsonHoyos'];
+    if (value != null) {
+      return value is String ? value : jsonEncode(value);
+    }
+  }
 
-  return match?.group(1);
+  return _extractMalformedBackendStringField(rawResponse, 'json_hoyos');
+}
+
+class _IndexedStatisticsHoleConfiguration {
+  const _IndexedStatisticsHoleConfiguration({
+    required this.index,
+    required this.hole,
+    required this.handicap,
+  });
+
+  final int index;
+  final int hole;
+  final String handicap;
 }
 
 Map<String, dynamic> _stringKeyedMap(Map<dynamic, dynamic> map) {

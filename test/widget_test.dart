@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_golf/golf_scorecard_screen.dart';
 import 'package:flutter_golf/main.dart';
@@ -26,7 +27,7 @@ void main() {
     expect(find.text('Recuperar Ronda'), findsNothing);
   });
 
-  testWidgets('can cancel initial user registration without saving', (
+  testWidgets('cancelling initial user registration closes the app', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -40,21 +41,35 @@ void main() {
       find.byType(SingleChildScrollView),
       const Offset(0, -120),
     );
+
+    final platformCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (methodCall) async {
+        platformCalls.add(methodCall);
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Tarjeta de golf'), findsOneWidget);
-    expect(find.textContaining('Jugador: Sin registrar'), findsOneWidget);
     expect(
-      find.textContaining('No hay ninguna partida guardada'),
-      findsNothing,
+      platformCalls,
+      contains(
+        isA<MethodCall>().having(
+          (call) => call.method,
+          'method',
+          'SystemNavigator.pop',
+        ),
+      ),
     );
-    expect(find.text('Mi Informacion'), findsOneWidget);
-
-    final startButton = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
-    );
-    expect(startButton.onPressed, isNull);
   });
 
   testWidgets('renders start actions on home when information exists', (
@@ -73,6 +88,8 @@ void main() {
     expect(find.text('Iniciar Salida'), findsOneWidget);
     expect(find.text('Salidas Pendientes'), findsNothing);
     expect(find.text('Estadisticas'), findsOneWidget);
+    expect(find.text('Liguillas'), findsOneWidget);
+    expect(find.text('Crea Liguilla'), findsNothing);
     expect(find.text('Mi Informacion'), findsOneWidget);
     expect(_logoFinder(), findsOneWidget);
 
@@ -80,6 +97,787 @@ void main() {
       find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
     );
     expect(startButton.onPressed, isNotNull);
+  });
+
+  testWidgets('polls pending invitations and blinks leagues button', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          pendingInvitationsResponse:
+              "{'invitaciones':1,'liguillas':[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias_creador':'Auto','movil_creador':'600000000'}]}",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final pendingUri = requests.firstWhere(
+      (uri) =>
+          uri.queryParameters['accion'] == 'mira_si_hay_invitacion_pendiente',
+    );
+    expect(pendingUri.queryParameters, {
+      'accion': 'mira_si_hay_invitacion_pendiente',
+      'idUsuario': '123',
+    });
+
+    var button = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Liguillas'),
+    );
+    expect(
+      button.style?.backgroundColor?.resolve(<WidgetState>{}),
+      const Color(0xFF6B432D),
+    );
+    expect(
+      button.style?.foregroundColor?.resolve(<WidgetState>{}),
+      Colors.white,
+    );
+
+    await tester.pump(const Duration(seconds: 1));
+    button = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Liguillas'),
+    );
+    expect(
+      button.style?.backgroundColor?.resolve(<WidgetState>{}),
+      Colors.transparent,
+    );
+    expect(
+      button.style?.foregroundColor?.resolve(<WidgetState>{}),
+      const Color(0xFF6B432D),
+    );
+  });
+
+  testWidgets('opens leagues screen from home', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'S','acabada':'','fecha_rechazo':''}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Liguillas'), findsOneWidget);
+    expect(find.text('Crea Liguilla'), findsOneWidget);
+    expect(find.text('TORNEO VERANO'), findsOneWidget);
+    expect(find.text('Creada por Auto'), findsOneWidget);
+    expect(find.text('Movil: 600000000'), findsOneWidget);
+    expect(find.text('Participantes'), findsOneWidget);
+    expect(find.text('Aceptar invitación'), findsOneWidget);
+    expect(find.text('Rechazar invitación'), findsOneWidget);
+    expect(find.text('Pendiente de decidir'), findsNothing);
+    expect(find.text('Vigente'), findsNothing);
+    expect(find.text('Rechazada'), findsNothing);
+
+    final leaguesUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'obtener_liguillas',
+    );
+    expect(leaguesUri.queryParameters, {
+      'accion': 'obtener_liguillas',
+      'idUsuario': '123',
+    });
+  });
+
+  testWidgets('opens league participants screen', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'S','acabada':'','fecha_rechazo':''}]",
+          invitedLeagueResponse:
+              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530','fecha_rechazo':'','pendiente_decidir':'N'},"
+              "{'idUsuario':'2','alias':'Luis','movil':'600222222','fecha_aceptacion':'','fecha_rechazo':'','pendiente_decidir':'S'},"
+              "{'idUsuario':'3','alias':'Marta','movil':'600333333','fecha_aceptacion':'','fecha_rechazo':'260511111530','pendiente_decidir':'N'}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Participantes'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Participantes'), findsOneWidget);
+    expect(find.text('TORNEO VERANO'), findsOneWidget);
+    expect(find.text('Ana'), findsOneWidget);
+    expect(find.text('Movil: 600111111'), findsOneWidget);
+    expect(find.text('Participa'), findsOneWidget);
+    expect(find.text('Participa 11/05/2026'), findsNothing);
+    expect(find.text('Luis'), findsOneWidget);
+    expect(find.text('Pendiente de decidir'), findsOneWidget);
+    expect(find.text('Marta'), findsOneWidget);
+    expect(find.text('No participa'), findsOneWidget);
+    expect(find.text('No participa 11/05/2026'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'Volver'), findsOneWidget);
+
+    final participantsUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'obtener_invitados_liguilla',
+    );
+    expect(participantsUri.queryParameters, {
+      'accion': 'obtener_invitados_liguilla',
+      'idLiguilla': '7',
+    });
+  });
+
+  testWidgets('opens league invitation when players can invite', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'N','acabada':'','fecha_rechazo':'','pueden_invitar':1,'creador':999}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Invitar'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invitacion'), findsOneWidget);
+    expect(find.text('TORNEO VERANO'), findsOneWidget);
+    expect(find.text('Movil'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Cancelar'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Invitar'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField), '12345 67890 12abc');
+    await tester.pumpAndSettle();
+
+    final mobileField = tester.widget<TextFormField>(
+      find.byType(TextFormField),
+    );
+    expect(mobileField.controller?.text, '12345 67890');
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invitación ok'), findsOneWidget);
+    expect(find.text('Liguillas'), findsOneWidget);
+
+    final invitationUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'envia_invitacion',
+    );
+    expect(invitationUri.queryParameters, {
+      'accion': 'envia_invitacion',
+      'idLiguilla': '7',
+      'movil': '12345 67890',
+      'invitador_por': '123',
+    });
+  });
+
+  testWidgets('shows backend response when league invitation fails', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'N','acabada':'','fecha_rechazo':'','pueden_invitar':1,'creador':999}]",
+          enviaInvitacionResponse:
+              '{"rpta":"el movil 600111111 no se reconoce !"}',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), '600111111');
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invitacion'), findsOneWidget);
+    expect(find.text('el movil 600111111 no se reconoce !'), findsOneWidget);
+    expect(find.textContaining('{"rpta"'), findsNothing);
+  });
+
+  testWidgets('allows league creator to invite when players cannot', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'N','acabada':'','fecha_rechazo':'','pueden_invitar':0,'creador':123}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Invitar'), findsOneWidget);
+  });
+
+  testWidgets('hides invite button when league is finished', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'N','acabada':'260511101530','fecha_rechazo':'','pueden_invitar':1,'creador':123}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Invitar'), findsNothing);
+  });
+
+  testWidgets('hides invite button when league participation is pending', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'S','acabada':'','fecha_rechazo':'','pueden_invitar':1,'creador':123}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Aceptar invitación'), findsOneWidget);
+    expect(find.text('Rechazar invitación'), findsOneWidget);
+    expect(find.text('Pendiente de decidir'), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Invitar'), findsNothing);
+  });
+
+  testWidgets('hides invite button when rejected value is not empty', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'N','acabada':'','fecha_rechazo':'260511101530','pueden_invitar':1,'creador':123}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Invitar'), findsNothing);
+  });
+
+  testWidgets('shows pending league invitation actions', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'S','acabada':'','fecha_rechazo':''}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Aceptar invitación'), findsOneWidget);
+    expect(find.text('Rechazar invitación'), findsOneWidget);
+    expect(find.text('Pendiente de decidir'), findsNothing);
+
+    await tester.tap(find.text('Aceptar invitación'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apuntado ok a la liguilla'), findsOneWidget);
+    expect(find.text('Aceptar invitación'), findsNothing);
+
+    final decisionUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'decision_participacion',
+    );
+    expect(decisionUri.queryParameters, {
+      'accion': 'decision_participacion',
+      'idLiguilla': '7',
+      'idUsuario': '123',
+      'decision': 'S',
+    });
+  });
+
+  testWidgets('pending league rejection action is visible', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'S','acabada':'','fecha_rechazo':''}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Aceptar invitación'), findsOneWidget);
+    expect(find.text('Rechazar invitación'), findsOneWidget);
+
+    await tester.tap(find.text('Rechazar invitación'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dado de baja de la liguilla'), findsOneWidget);
+    expect(find.text('Rechazar invitación'), findsNothing);
+
+    final decisionUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'decision_participacion',
+    );
+    expect(decisionUri.queryParameters, {
+      'accion': 'decision_participacion',
+      'idLiguilla': '7',
+      'idUsuario': '123',
+      'decision': 'N',
+    });
+  });
+
+  testWidgets('leaves accepted league after confirmation', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':8,'titulo':'PRU PRIMERA','alias':'Karles','movil':'666666661','pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Darse de baja'), findsOneWidget);
+    expect(find.text('Pendiente de decidir'), findsNothing);
+
+    await tester.tap(find.text('Darse de baja'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Seguro que te das de baja de la liguilla ?'),
+      findsOneWidget,
+    );
+    expect(find.text('Si'), findsOneWidget);
+    expect(find.text('No'), findsOneWidget);
+
+    await tester.tap(find.text('No'));
+    await tester.pumpAndSettle();
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('decision_participacion')),
+    );
+
+    await tester.tap(find.text('Darse de baja'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Si'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dado de baja de la liguilla'), findsOneWidget);
+
+    final decisionUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'decision_participacion',
+    );
+    expect(decisionUri.queryParameters, {
+      'accion': 'decision_participacion',
+      'idLiguilla': '8',
+      'idUsuario': '123',
+      'decision': 'N',
+    });
+  });
+
+  testWidgets('shows rejected league date without leave action', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':8,'titulo':'PRU PRIMERA','alias':'Karles','movil':'666666661','pendiente_decidir':'N','acabada':'','fecha_rechazo':'260511101530','invitado_por':123}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rechazada 11/05/2026'), findsOneWidget);
+    final rejectedLeagueRect = tester.getRect(
+      find.byKey(const ValueKey('league_item_8')),
+    );
+    final rejectedLabelRect = tester.getRect(find.text('Rechazada 11/05/2026'));
+    expect(
+      (rejectedLabelRect.center.dx - rejectedLeagueRect.center.dx).abs(),
+      lessThan(1),
+    );
+    expect(find.text('Reapuntarse a la liguilla'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Reapuntarse a la liguilla')).dy,
+      greaterThan(tester.getTopLeft(find.text('Participantes')).dy),
+    );
+    expect(
+      rejectedLabelRect.top,
+      greaterThan(
+        tester.getBottomLeft(find.text('Reapuntarse a la liguilla')).dy,
+      ),
+    );
+    expect(find.text('Darse de baja'), findsNothing);
+    expect(find.text('Pendiente de decidir'), findsNothing);
+
+    await tester.tap(find.text('Reapuntarse a la liguilla'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apuntado ok a la liguilla'), findsOneWidget);
+
+    final decisionUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'decision_participacion',
+    );
+    expect(decisionUri.queryParameters, {
+      'accion': 'decision_participacion',
+      'idLiguilla': '8',
+      'idUsuario': '123',
+      'decision': 'S',
+    });
+  });
+
+  testWidgets('hides rejected league invited by another user', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':8,'titulo':'PRU PRIMERA','alias':'Karles','movil':'666666661','pendiente_decidir':'N','acabada':'','fecha_rechazo':'260511101530','invitado_por':999}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PRU PRIMERA'), findsNothing);
+    expect(find.text('Rechazada 11/05/2026'), findsNothing);
+    expect(find.text('No hay liguillas'), findsOneWidget);
+  });
+
+  testWidgets('opens create league screen from leagues', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(datosServidorService: _existingFieldsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await _openCreateLeagueFromHome(tester);
+
+    expect(find.text('Crear Liguilla'), findsOneWidget);
+    expect(find.text('Titulo de liguilla'), findsOneWidget);
+    expect(find.text('Jornadas'), findsOneWidget);
+    expect(find.text('Minimo jugadores jornada'), findsOneWidget);
+    expect(find.text('Participacion minima jugador'), findsOneWidget);
+    expect(find.text('Pueden invitar'), findsOneWidget);
+    expect(find.text('Mensaje invitacion'), findsOneWidget);
+    expect(find.text('¿ Participas tu en el torneo ?'), findsOneWidget);
+    expect(find.text('Indefinido'), findsNWidgets(2));
+    expect(find.text('Si'), findsNWidgets(2));
+    expect(find.text('No'), findsNWidgets(2));
+    expect(find.text('Guardar'), findsOneWidget);
+    expect(find.text('Cancelar'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(IconButton, '?').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('reconocerán la liguilla'), findsOneWidget);
+
+    await tester.tap(find.text('Entendido'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Cancelar'));
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Liguillas'), findsOneWidget);
+    expect(find.text('Crea Liguilla'), findsOneWidget);
+  });
+
+  testWidgets('validates required create league fields', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(datosServidorService: _existingFieldsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await _openCreateLeagueFromHome(tester);
+
+    await tester.ensureVisible(find.text('Guardar'));
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Campo obligatorio'), findsNWidgets(5));
+    expect(find.text('Liguilla creada ok'), findsNothing);
+  });
+
+  testWidgets('rejects zero and three digit league numbers', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(datosServidorService: _existingFieldsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await _openCreateLeagueFromHome(tester);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Liga jueves');
+    await tester.enterText(find.byType(TextFormField).at(1), '0');
+    await tester.enterText(find.byType(TextFormField).at(2), '100');
+    await tester.enterText(find.byType(TextFormField).at(3), '0');
+    await tester.enterText(
+      find.byType(TextFormField).at(4),
+      'Te invito a la liguilla',
+    );
+
+    await tester.ensureVisible(find.text('Guardar'));
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Debe estar entre 1 y 99'), findsNWidgets(3));
+    expect(find.text('Liguilla creada ok'), findsNothing);
+  });
+
+  testWidgets('creates league and returns to leagues after save', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openCreateLeagueFromHome(tester);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Liga jueves');
+    await tester.enterText(find.byType(TextFormField).at(1), '8');
+    await tester.enterText(find.byType(TextFormField).at(2), '4');
+    await tester.enterText(find.byType(TextFormField).at(3), '3');
+    final inviteNo = find.descendant(
+      of: find.byType(SegmentedButton<bool>).at(0),
+      matching: find.text('No'),
+    );
+    await tester.ensureVisible(inviteNo);
+    await tester.pumpAndSettle();
+    await tester.tap(inviteNo);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextFormField).at(4),
+      'Te invito a la liguilla',
+    );
+    final hostNo = find.descendant(
+      of: find.byType(SegmentedButton<bool>).at(1),
+      matching: find.text('No'),
+    );
+    await tester.ensureVisible(hostNo);
+    await tester.pumpAndSettle();
+    await tester.tap(hostNo);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Guardar'));
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Liguillas'), findsOneWidget);
+    expect(find.text('Liguilla creada ok'), findsOneWidget);
+
+    final createLeagueUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'crear_liguilla',
+    );
+    expect(createLeagueUri.queryParameters, {
+      'accion': 'crear_liguilla',
+      'idUsuario': '123',
+      'titulo': 'LIGA JUEVES',
+      'jornadas': '8',
+      'minimo_jugadores_jornada': '4',
+      'participacion_minima_jugador': '3',
+      'pueden_invitar': '0',
+      'participa_anfitrion': 'N',
+      'mensaje_invitacion': 'Te invito a la liguilla',
+    });
+  });
+
+  testWidgets('creates league with undefined numeric fields', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openCreateLeagueFromHome(tester);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Liga abierta');
+    await tester.tap(find.byType(Checkbox).at(0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Checkbox).at(1));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).at(3), '2');
+    await tester.enterText(
+      find.byType(TextFormField).at(4),
+      'Te invito a la liguilla abierta',
+    );
+
+    await tester.ensureVisible(find.text('Guardar'));
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    final createLeagueUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'crear_liguilla',
+    );
+    expect(createLeagueUri.queryParameters['idUsuario'], '123');
+    expect(createLeagueUri.queryParameters['titulo'], 'LIGA ABIERTA');
+    expect(createLeagueUri.queryParameters['jornadas'], '-1');
+    expect(createLeagueUri.queryParameters['minimo_jugadores_jornada'], '-1');
+    expect(
+      createLeagueUri.queryParameters['participacion_minima_jugador'],
+      '2',
+    );
+    expect(createLeagueUri.queryParameters['pueden_invitar'], '1');
+    expect(createLeagueUri.queryParameters['participa_anfitrion'], 'S');
   });
 
   testWidgets('opens statistics with current user score rows', (
@@ -111,8 +909,16 @@ void main() {
     ]);
     final allGamesResponse = jsonEncode({
       'partidas': [
-        {'dia': '260505', 'json_partida': firstRoundRows},
-        {'fecha': '2026-04-19', 'json_partida': secondRoundRows},
+        {
+          'idPartida': 'STATS1',
+          'dia': '260505',
+          'json_partida': firstRoundRows,
+        },
+        {
+          'idPartida': 'STATS2',
+          'fecha': '2026-04-19',
+          'json_partida': secondRoundRows,
+        },
       ],
     });
 
@@ -138,8 +944,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.byIcon(Icons.visibility), findsNWidgets(2));
     expect(find.text('05/05/2026'), findsOneWidget);
     expect(find.text('19/04/2026'), findsOneWidget);
+    expect(find.text('Dif. HCP'), findsOneWidget);
+    expect(find.text('+7'), findsOneWidget);
+    expect(find.text('+18'), findsOneWidget);
     expect(find.text('Respuesta backend'), findsNothing);
     expect(find.text(allGamesResponse), findsNothing);
     expect(find.text('88'), findsNothing);
@@ -167,6 +977,67 @@ void main() {
       _containerColorCount(tester, const Color(0xFFBFD9F2)),
       greaterThan(0),
     );
+
+    await tester.tap(find.byIcon(Icons.visibility).first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('idPartida: STATS1'), findsOneWidget);
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('Luis'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'Darme de baja'), findsNothing);
+    expect(
+      find.widgetWithText(OutlinedButton, 'Destruir tarjeta'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('uses round scorecard configuration for statistics difference', (
+    WidgetTester tester,
+  ) async {
+    final roundRows = jsonEncode([
+      {
+        'idUsuario': '123',
+        'jugador': 'Auto',
+        'modificado': '260505101501',
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '5',
+      },
+    ]);
+    final allGamesResponse = jsonEncode({
+      'partidas': [
+        {
+          'idPartida': 'STATS1',
+          'dia': '260505',
+          'json_partida': roundRows,
+          'configuracion_tarjeta': _scorecardConfigurationValue(
+            List.filled(18, 4),
+          ),
+        },
+      ],
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          scorecardConfigurationResponse: _scorecardConfigurationResponse(
+            List.filled(18, 3),
+          ),
+          allGamesResponse: allGamesResponse,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Estadisticas'));
+    await tester.tap(find.text('Estadisticas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('+18'), findsOneWidget);
+    expect(find.text('+36'), findsNothing);
   });
 
   testWidgets('hides raw statistics backend response when request fails', (
@@ -1313,6 +2184,306 @@ void main() {
     expect(savedInformation['idUsuario'], '123');
   });
 
+  testWidgets(
+    'uses backend mobile user id during registration after confirmation',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Uri>[];
+      await tester.pumpWidget(
+        GolfScorecardApp(
+          datosServidorService: _existingFieldsService(
+            requests: requests,
+            movilUsuarioExists: true,
+            movilUsuarioId: '777',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextFormField).at(0), 'Auto');
+      await tester.enterText(find.byType(TextFormField).at(1), 'Nombre');
+      await tester.enterText(find.byType(TextFormField).at(2), 'Apellidos');
+      await tester.enterText(find.byType(TextFormField).at(7), '600000000');
+      await tester.enterText(
+        find.byType(TextFormField).at(8),
+        'auto@example.com',
+      );
+
+      await tester.ensureVisible(find.text('Guardar informacion'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Guardar informacion'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'este movil ya existe, se sobreescribiran los datos de usuario',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        requests.map((uri) => uri.queryParameters['accion']),
+        isNot(contains('alta_usuario_golf')),
+      );
+      expect(
+        requests.map((uri) => uri.queryParameters['accion']),
+        isNot(contains('edita_usuario_golf')),
+      );
+
+      await tester.tap(find.text('Adelante'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tarjeta de golf'), findsOneWidget);
+      expect(
+        requests.map((uri) => uri.queryParameters['accion']),
+        contains('edita_usuario_golf'),
+      );
+      expect(
+        requests.map((uri) => uri.queryParameters['accion']),
+        isNot(contains('alta_usuario_golf')),
+      );
+
+      final editaUsuarioUri = requests.firstWhere(
+        (uri) => uri.queryParameters['accion'] == 'edita_usuario_golf',
+      );
+      expect(editaUsuarioUri.queryParameters, containsPair('idUsuario', '777'));
+
+      final prefs = await SharedPreferences.getInstance();
+      final savedInformation = jsonDecode(
+        prefs.getString('saved_user_information_json')!,
+      );
+      expect(savedInformation['idUsuario'], '777');
+    },
+  );
+
+  testWidgets('cancels registration when mobile belongs to another user', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          movilUsuarioExists: true,
+          movilUsuarioId: '777',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Auto');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Nombre');
+    await tester.enterText(find.byType(TextFormField).at(2), 'Apellidos');
+    await tester.enterText(find.byType(TextFormField).at(7), '600000000');
+    await tester.enterText(
+      find.byType(TextFormField).at(8),
+      'auto@example.com',
+    );
+
+    await tester.ensureVisible(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'este movil ya existe, se sobreescribiran los datos de usuario',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Cancela'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alta de usuario'), findsOneWidget);
+    expect(find.text('Tarjeta de golf'), findsNothing);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('alta_usuario_golf')),
+    );
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('edita_usuario_golf')),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('saved_user_information_json'), isNull);
+  });
+
+  testWidgets('saves edited user information with editaUsuario', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(1), 'Nombre Editado');
+    await tester.dragUntilVisible(
+      find.text('Guardar informacion'),
+      find.byType(SingleChildScrollView),
+      const Offset(0, -120),
+    );
+    await tester.tap(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tarjeta de golf'), findsOneWidget);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      contains('edita_usuario_golf'),
+    );
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('alta_usuario_golf')),
+    );
+
+    final editaUsuarioUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'edita_usuario_golf',
+    );
+    expect(editaUsuarioUri.queryParameters, containsPair('idUsuario', '123'));
+    expect(
+      editaUsuarioUri.queryParameters,
+      containsPair('nombre', 'Nombre Editado'),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedInformation = jsonDecode(
+      prefs.getString('saved_user_information_json')!,
+    );
+    expect(savedInformation['idUsuario'], '123');
+    expect(savedInformation['nombre'], 'Nombre Editado');
+  });
+
+  testWidgets('uses backend mobile user id after overwrite confirmation', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          movilUsuarioExists: true,
+          movilUsuarioId: '999',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(1), 'Nombre Editado');
+    await tester.dragUntilVisible(
+      find.text('Guardar informacion'),
+      find.byType(SingleChildScrollView),
+      const Offset(0, -120),
+    );
+    await tester.tap(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'este movil ya existe, se sobreescribiran los datos de usuario',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Adelante'), findsOneWidget);
+    expect(find.text('Cancela'), findsOneWidget);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('edita_usuario_golf')),
+    );
+
+    await tester.tap(find.text('Adelante'));
+    await tester.pumpAndSettle();
+
+    final editaUsuarioUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'edita_usuario_golf',
+    );
+    expect(editaUsuarioUri.queryParameters, containsPair('idUsuario', '999'));
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedInformation = jsonDecode(
+      prefs.getString('saved_user_information_json')!,
+    );
+    expect(savedInformation['idUsuario'], '999');
+    expect(savedInformation['nombre'], 'Nombre Editado');
+  });
+
+  testWidgets('cancels editing when mobile belongs to another user', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          movilUsuarioExists: true,
+          movilUsuarioId: '999',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+
+    await tester.dragUntilVisible(
+      find.text('Guardar informacion'),
+      find.byType(SingleChildScrollView),
+      const Offset(0, -120),
+    );
+    await tester.tap(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'este movil ya existe, se sobreescribiran los datos de usuario',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Cancela'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mi Informacion'), findsOneWidget);
+    expect(find.text('Tarjeta de golf'), findsNothing);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('edita_usuario_golf')),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedInformation = jsonDecode(
+      prefs.getString('saved_user_information_json')!,
+    );
+    expect(savedInformation['idUsuario'], '123');
+  });
+
   testWidgets('keeps local user unregistered when backend registration fails', (
     WidgetTester tester,
   ) async {
@@ -1552,6 +2723,40 @@ void main() {
     expect(find.text('Tarjeta de golf'), findsNothing);
   });
 
+  testWidgets('rejects empty mobile when editing saved information', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mi Informacion'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(7), '');
+    await tester.ensureVisible(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Campo obligatorio'), findsWidgets);
+    expect(find.text('Tarjeta de golf'), findsNothing);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('edita_usuario_golf')),
+    );
+  });
+
   testWidgets('can cancel user information editing', (
     WidgetTester tester,
   ) async {
@@ -1586,6 +2791,12 @@ DatosServidorService _existingFieldsService({
   bool existingMail = false,
   bool existingMovil = false,
   bool altaUsuarioOk = true,
+  bool editaUsuarioOk = true,
+  bool movilUsuarioExists = false,
+  String movilUsuarioId = '123',
+  bool crearLiguillaOk = true,
+  bool decisionParticipacionOk = true,
+  String enviaInvitacionResponse = '{"rpta":"ok"}',
   List<Uri>? requests,
   String initialStateResponse = "{'empezada':'','ultima_modificacion':''}",
   String startGameResponse = '{"rpta":"ok"}',
@@ -1595,6 +2806,11 @@ DatosServidorService _existingFieldsService({
   String? scorecardConfigurationResponse,
   String allGamesResponse = '{"partidas":[]}',
   int allGamesStatusCode = 200,
+  String leaguesResponse = '[]',
+  int leaguesStatusCode = 200,
+  String pendingInvitationsResponse = "{'invitaciones':0,'liguillas':[]}",
+  String invitedLeagueResponse = '[]',
+  int invitedLeagueStatusCode = 200,
 }) {
   final annotatedInvitationGames = <String>{};
 
@@ -1610,6 +2826,53 @@ DatosServidorService _existingFieldsService({
           }),
           200,
         );
+      }
+
+      if (accion == 'edita_usuario_golf') {
+        return http.Response(
+          jsonEncode({'rpta': editaUsuarioOk ? 'ok' : 'ko'}),
+          200,
+        );
+      }
+
+      if (accion == 'ya_existe_movil_usuario') {
+        return http.Response(
+          jsonEncode({
+            'rpta': movilUsuarioExists ? 'si' : 'no',
+            if (movilUsuarioExists) 'idUsuario': movilUsuarioId,
+          }),
+          200,
+        );
+      }
+
+      if (accion == 'crear_liguilla') {
+        return http.Response(
+          jsonEncode({'rpta': crearLiguillaOk ? 'ok' : 'ko'}),
+          200,
+        );
+      }
+
+      if (accion == 'obtener_liguillas') {
+        return http.Response(leaguesResponse, leaguesStatusCode);
+      }
+
+      if (accion == 'mira_si_hay_invitacion_pendiente') {
+        return http.Response(pendingInvitationsResponse, 200);
+      }
+
+      if (accion == 'obtener_invitados_liguilla') {
+        return http.Response(invitedLeagueResponse, invitedLeagueStatusCode);
+      }
+
+      if (accion == 'decision_participacion') {
+        return http.Response(
+          jsonEncode({'rpta': decisionParticipacionOk ? 'ok' : 'ko'}),
+          200,
+        );
+      }
+
+      if (accion == 'envia_invitacion') {
+        return http.Response(enviaInvitacionResponse, 200);
       }
 
       if (accion == 'crea_partida') {
@@ -1747,6 +3010,13 @@ String _backendTimestamp(DateTime value) {
 }
 
 String _scorecardConfigurationResponse(List<int> handicapValues) {
+  return jsonEncode({
+    'rpta': 'ok',
+    'valor': _scorecardConfigurationValue(handicapValues),
+  });
+}
+
+String _scorecardConfigurationValue(List<int> handicapValues) {
   final holes = List.generate(18, (index) {
     return {
       'hoyo': '${index + 1}',
@@ -1759,7 +3029,7 @@ String _scorecardConfigurationResponse(List<int> handicapValues) {
     };
   });
 
-  return jsonEncode({'rpta': 'ok', 'valor': jsonEncode(holes)});
+  return jsonEncode(holes);
 }
 
 int _containerColorCount(WidgetTester tester, Color color) {
@@ -1780,6 +3050,15 @@ Finder _horizontalScrollAncestorOfButton(String text) {
           widget.scrollDirection == Axis.horizontal,
     ),
   );
+}
+
+Future<void> _openCreateLeagueFromHome(WidgetTester tester) async {
+  await tester.ensureVisible(find.text('Liguillas'));
+  await tester.tap(find.text('Liguillas'));
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text('Crea Liguilla'));
+  await tester.tap(find.text('Crea Liguilla'));
+  await tester.pumpAndSettle();
 }
 
 String _twoDigits(int value) {

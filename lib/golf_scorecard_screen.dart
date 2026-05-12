@@ -51,6 +51,7 @@ class GolfScorecardScreen extends StatefulWidget {
     this.differentRemotePlayRowsJson,
     this.datosServidorService,
     this.onPlayRowsJsonChanged,
+    this.isReadOnly = false,
   });
 
   static const double _labelWidth = 180;
@@ -80,6 +81,7 @@ class GolfScorecardScreen extends StatefulWidget {
   final VoidCallback onExit;
   final Future<void> Function() onLeaveGame;
   final Future<void> Function() onDestroyGame;
+  final bool isReadOnly;
 
   @override
   State<GolfScorecardScreen> createState() => _GolfScorecardScreenState();
@@ -314,7 +316,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canLeaveGame = _playRowValues.length > 1 && !_isLeavingGame;
+    final canLeaveGame =
+        !widget.isReadOnly && _playRowValues.length > 1 && !_isLeavingGame;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -395,28 +398,74 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                 icon: const Icon(Icons.arrow_back),
                                 label: const Text('Salir'),
                               ),
-                              const SizedBox(height: 10),
-                              ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  maxWidth: availableWidth,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (canLeaveGame) ...[
+                              if (!widget.isReadOnly) ...[
+                                const SizedBox(height: 10),
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth: availableWidth,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (canLeaveGame) ...[
+                                        Flexible(
+                                          child: OutlinedButton.icon(
+                                            onPressed:
+                                                _showLeaveGameConfirmation,
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: const Color(
+                                                0xFFF6F2EA,
+                                              ),
+                                              backgroundColor:
+                                                  const Color.fromRGBO(
+                                                    107,
+                                                    67,
+                                                    45,
+                                                    0.28,
+                                                  ),
+                                              side: const BorderSide(
+                                                color: Color(0xFFF6F2EA),
+                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 12,
+                                                  ),
+                                              textStyle: const TextStyle(
+                                                fontSize: 13,
+                                              ),
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                            icon: const Icon(
+                                              Icons.person_remove,
+                                              size: 18,
+                                            ),
+                                            label: const Text(
+                                              'Darme de baja',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
                                       Flexible(
                                         child: OutlinedButton.icon(
-                                          onPressed: _showLeaveGameConfirmation,
+                                          onPressed: _isDestroyingGame
+                                              ? null
+                                              : _showDestroyCardConfirmation,
                                           style: OutlinedButton.styleFrom(
                                             foregroundColor: const Color(
                                               0xFFF6F2EA,
                                             ),
                                             backgroundColor:
                                                 const Color.fromRGBO(
-                                                  107,
-                                                  67,
-                                                  45,
-                                                  0.28,
+                                                  139,
+                                                  58,
+                                                  52,
+                                                  0.32,
                                                 ),
                                             side: const BorderSide(
                                               color: Color(0xFFF6F2EA),
@@ -432,61 +481,21 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                                 VisualDensity.compact,
                                           ),
                                           icon: const Icon(
-                                            Icons.person_remove,
+                                            Icons.delete_forever,
                                             size: 18,
                                           ),
                                           label: const Text(
-                                            'Darme de baja',
+                                            'Destruir tarjeta',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             softWrap: false,
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
                                     ],
-                                    Flexible(
-                                      child: OutlinedButton.icon(
-                                        onPressed: _isDestroyingGame
-                                            ? null
-                                            : _showDestroyCardConfirmation,
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: const Color(
-                                            0xFFF6F2EA,
-                                          ),
-                                          backgroundColor: const Color.fromRGBO(
-                                            139,
-                                            58,
-                                            52,
-                                            0.32,
-                                          ),
-                                          side: const BorderSide(
-                                            color: Color(0xFFF6F2EA),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 12,
-                                          ),
-                                          textStyle: const TextStyle(
-                                            fontSize: 13,
-                                          ),
-                                          visualDensity: VisualDensity.compact,
-                                        ),
-                                        icon: const Icon(
-                                          Icons.delete_forever,
-                                          size: 18,
-                                        ),
-                                        label: const Text(
-                                          'Destruir tarjeta',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          softWrap: false,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -505,6 +514,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                 jugadores: widget.jugadores,
                                 loadError: _loadError,
                                 onPlayValueChanged: _updatePlayValue,
+                                isEditable: !widget.isReadOnly,
                               ),
                             ),
                           ),
@@ -531,6 +541,7 @@ class _ScorecardCard extends StatelessWidget {
     required this.jugadores,
     required this.loadError,
     required this.onPlayValueChanged,
+    required this.isEditable,
   });
 
   final List<_ScoreRowData> guideRows;
@@ -541,6 +552,7 @@ class _ScorecardCard extends StatelessWidget {
   final String? loadError;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final bool isEditable;
 
   @override
   Widget build(BuildContext context) {
@@ -574,6 +586,7 @@ class _ScorecardCard extends StatelessWidget {
               playRowValues: playRowValues,
               playRowLabels: playRowLabels,
               onPlayValueChanged: onPlayValueChanged,
+              isEditable: isEditable,
             ),
             if (loadError != null) ...[
               const SizedBox(height: 10),
@@ -608,6 +621,7 @@ class _ScoreGrid extends StatelessWidget {
     required this.playRowValues,
     required this.playRowLabels,
     required this.onPlayValueChanged,
+    required this.isEditable,
   });
 
   final List<_ScoreRowData> guideRows;
@@ -615,6 +629,7 @@ class _ScoreGrid extends StatelessWidget {
   final List<String> playRowLabels;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final bool isEditable;
 
   @override
   Widget build(BuildContext context) {
@@ -634,7 +649,7 @@ class _ScoreGrid extends StatelessWidget {
                 ? playRowLabels[rowIndex]
                 : '${rowIndex + 1}',
             handicapValues: handicapValues,
-            isEditable: true,
+            isEditable: isEditable,
             onValueChanged: onPlayValueChanged,
           );
         }),
@@ -776,7 +791,7 @@ class _GridPlayRow extends StatelessWidget {
     final frontTotal = _sumScoreValues(frontValues);
     final backTotal = _sumScoreValues(backValues);
     final roundTotal = _sumScoreValues(values);
-    final tone = isEditable ? row.tone : _RowTone.disabledPlay;
+    final tone = row.tone;
 
     return SizedBox(
       height: row.height,
@@ -801,12 +816,14 @@ class _GridPlayRow extends StatelessWidget {
                   _holeValue(handicapValues, entry.key),
                 ),
               ),
-              child: _NumericGridInput(
-                initialValue: entry.value,
-                enabled: isEditable,
-                onChanged: (value) =>
-                    onValueChanged(rowIndex, entry.key, value),
-              ),
+              child: isEditable
+                  ? _NumericGridInput(
+                      initialValue: entry.value,
+                      enabled: true,
+                      onChanged: (value) =>
+                          onValueChanged(rowIndex, entry.key, value),
+                    )
+                  : _ValueText(entry.value),
             ),
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
@@ -825,12 +842,14 @@ class _GridPlayRow extends StatelessWidget {
                   _holeValue(handicapValues, entry.key + 9),
                 ),
               ),
-              child: _NumericGridInput(
-                initialValue: entry.value,
-                enabled: isEditable,
-                onChanged: (value) =>
-                    onValueChanged(rowIndex, entry.key + 9, value),
-              ),
+              child: isEditable
+                  ? _NumericGridInput(
+                      initialValue: entry.value,
+                      enabled: true,
+                      onChanged: (value) =>
+                          onValueChanged(rowIndex, entry.key + 9, value),
+                    )
+                  : _ValueText(entry.value),
             ),
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
