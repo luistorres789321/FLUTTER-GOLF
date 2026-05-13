@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,13 +12,131 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'firebase_options.dart';
 import 'golf_scorecard_screen.dart';
 import 'services/datos_servidor_service.dart';
 
+const _firebaseMessagingTokenKey = 'firebase_messaging_token';
+const _firebaseMessagingTokenStatusKey = 'firebase_messaging_token_status';
+const _firebaseMessagingTokenStatusPending = 'no enviado';
+const _firebaseMessagingTokenStatusSent = 'enviado';
+const _firebaseMessagingApnsTokenPollDelay = Duration(milliseconds: 500);
+const _firebaseMessagingApnsTokenPollAttempts = 20;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (_supportsFirebaseMessaging) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    unawaited(_configureFirebaseMessaging());
+  }
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const GolfScorecardApp());
+}
+
+bool get _supportsFirebaseMessaging {
+  if (kIsWeb) {
+    return false;
+  }
+
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+}
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  debugPrint('Firebase background message: ${message.messageId ?? 'sin id'}');
+}
+
+Future<void> _configureFirebaseMessaging() async {
+  try {
+    final messaging = FirebaseMessaging.instance;
+    await messaging.setAutoInitEnabled(true);
+    await messaging.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    final settings = await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+    debugPrint(
+      'Firebase notification permission: ${settings.authorizationStatus.name}',
+    );
+
+    await _storeFirebaseMessagingToken(
+      await _loadFirebaseMessagingToken(messaging),
+    );
+
+    messaging.onTokenRefresh.listen((token) {
+      unawaited(_storeFirebaseMessagingToken(token));
+    });
+
+    FirebaseMessaging.onMessage.listen((message) {
+      debugPrint(
+        'Firebase foreground message: ${message.messageId ?? 'sin id'}',
+      );
+    });
+  } catch (error) {
+    debugPrint('Firebase messaging setup fallo: $error');
+  }
+}
+
+Future<String?> _loadFirebaseMessagingToken(FirebaseMessaging messaging) async {
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    final apnsToken = await _waitForFirebaseApnsToken(messaging);
+    if (apnsToken == null) {
+      debugPrint('Firebase APNs token no disponible todavia.');
+      return null;
+    }
+    debugPrint('Firebase APNs token disponible: $apnsToken');
+  }
+
+  return messaging.getToken();
+}
+
+Future<String?> _waitForFirebaseApnsToken(FirebaseMessaging messaging) async {
+  for (
+    var attempt = 0;
+    attempt < _firebaseMessagingApnsTokenPollAttempts;
+    attempt++
+  ) {
+    final token = await messaging.getAPNSToken();
+    if (token != null && token.isNotEmpty) {
+      return token;
+    }
+
+    await Future<void>.delayed(_firebaseMessagingApnsTokenPollDelay);
+  }
+
+  return null;
+}
+
+Future<void> _storeFirebaseMessagingToken(String? token) async {
+  if (token == null || token.isEmpty) {
+    debugPrint('Firebase FCM token no disponible todavia.');
+    return;
+  }
+
+  final prefs = await SharedPreferences.getInstance();
+  final previousToken = prefs.getString(_firebaseMessagingTokenKey);
+  final previousStatus = prefs.getString(_firebaseMessagingTokenStatusKey);
+  final isKnownStatus =
+      previousStatus == _firebaseMessagingTokenStatusPending ||
+      previousStatus == _firebaseMessagingTokenStatusSent;
+  final nextStatus = previousToken == token && isKnownStatus
+      ? previousStatus!
+      : _firebaseMessagingTokenStatusPending;
+
+  await prefs.setString(_firebaseMessagingTokenKey, token);
+  await prefs.setString(_firebaseMessagingTokenStatusKey, nextStatus);
+  debugPrint('Firebase FCM token guardado: $token ($nextStatus)');
 }
 
 class GolfScorecardApp extends StatelessWidget {

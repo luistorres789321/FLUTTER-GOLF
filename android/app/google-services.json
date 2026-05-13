@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "619533823416",
+    "project_id": "notificaciones-golf-5ca9c",
+    "storage_bucket": "notificaciones-golf-5ca9c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:619533823416:android:ff980b2ae550fd0d5c734d",
+        "android_client_info": {
+          "package_name": "com.autopowersoft.tarjetagolf"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWF5CsSHqrh22LwbueBy3D0Sw2fIwY0w0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
