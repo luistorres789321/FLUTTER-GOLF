@@ -16,15 +16,23 @@ import 'firebase_options.dart';
 import 'golf_scorecard_screen.dart';
 import 'services/datos_servidor_service.dart';
 
+const _deviceIdKey = 'idDispositivo';
+const _deviceIdLength = 32;
+const _deviceIdAlphabet =
+    '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const _firebaseMessagingTokenKey = 'firebase_messaging_token';
 const _firebaseMessagingTokenStatusKey = 'firebase_messaging_token_status';
-const _firebaseMessagingTokenStatusPending = 'no enviado';
-const _firebaseMessagingTokenStatusSent = 'enviado';
+const _firebaseMessagingTokenStatusPending = 'no enviada';
+const _firebaseMessagingTokenStatusSent = 'enviada';
+const _firebaseMessagingTokenStatusLegacyPending = 'no enviado';
+const _firebaseMessagingTokenStatusLegacySent = 'enviado';
 const _firebaseMessagingApnsTokenPollDelay = Duration(milliseconds: 500);
 const _firebaseMessagingApnsTokenPollAttempts = 20;
+bool _isSendingFirebaseMessagingToken = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _ensureDeviceId();
   if (_supportsFirebaseMessaging) {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -34,6 +42,28 @@ Future<void> main() async {
   }
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const GolfScorecardApp());
+}
+
+Future<String> _ensureDeviceId() async {
+  final prefs = await SharedPreferences.getInstance();
+  final savedDeviceId = prefs.getString(_deviceIdKey)?.trim();
+  if (savedDeviceId != null && savedDeviceId.isNotEmpty) {
+    debugPrint('idDispositivo existente: $savedDeviceId');
+    return savedDeviceId;
+  }
+
+  final deviceId = _generateDeviceId();
+  await prefs.setString(_deviceIdKey, deviceId);
+  debugPrint('idDispositivo generado: $deviceId');
+  return deviceId;
+}
+
+String _generateDeviceId() {
+  final random = Random.secure();
+  return List.generate(
+    _deviceIdLength,
+    (_) => _deviceIdAlphabet[random.nextInt(_deviceIdAlphabet.length)],
+  ).join();
 }
 
 bool get _supportsFirebaseMessaging {
@@ -127,16 +157,97 @@ Future<void> _storeFirebaseMessagingToken(String? token) async {
   final prefs = await SharedPreferences.getInstance();
   final previousToken = prefs.getString(_firebaseMessagingTokenKey);
   final previousStatus = prefs.getString(_firebaseMessagingTokenStatusKey);
-  final isKnownStatus =
-      previousStatus == _firebaseMessagingTokenStatusPending ||
-      previousStatus == _firebaseMessagingTokenStatusSent;
-  final nextStatus = previousToken == token && isKnownStatus
-      ? previousStatus!
+  final nextStatus =
+      previousToken == token &&
+          _isKnownFirebaseMessagingTokenStatus(previousStatus)
+      ? _normalizeFirebaseMessagingTokenStatus(previousStatus!)
       : _firebaseMessagingTokenStatusPending;
 
   await prefs.setString(_firebaseMessagingTokenKey, token);
   await prefs.setString(_firebaseMessagingTokenStatusKey, nextStatus);
   debugPrint('Firebase FCM token guardado: $token ($nextStatus)');
+  await _sendPendingFirebaseMessagingTokenIfNeeded(prefs);
+}
+
+bool _isKnownFirebaseMessagingTokenStatus(String? status) {
+  return _isPendingFirebaseMessagingTokenStatus(status) ||
+      _isSentFirebaseMessagingTokenStatus(status);
+}
+
+bool _isPendingFirebaseMessagingTokenStatus(String? status) {
+  return status == _firebaseMessagingTokenStatusPending ||
+      status == _firebaseMessagingTokenStatusLegacyPending;
+}
+
+bool _isSentFirebaseMessagingTokenStatus(String? status) {
+  return status == _firebaseMessagingTokenStatusSent ||
+      status == _firebaseMessagingTokenStatusLegacySent;
+}
+
+String _normalizeFirebaseMessagingTokenStatus(String status) {
+  if (_isSentFirebaseMessagingTokenStatus(status)) {
+    return _firebaseMessagingTokenStatusSent;
+  }
+
+  return _firebaseMessagingTokenStatusPending;
+}
+
+Future<void> _sendPendingFirebaseMessagingTokenIfNeeded(
+  SharedPreferences prefs,
+) async {
+  if (_isSendingFirebaseMessagingToken) {
+    return;
+  }
+
+  final deviceId = prefs.getString(_deviceIdKey)?.trim() ?? '';
+  final token = prefs.getString(_firebaseMessagingTokenKey)?.trim() ?? '';
+  final status = prefs.getString(_firebaseMessagingTokenStatusKey);
+  if (deviceId.isEmpty || token.isEmpty) {
+    debugPrint('Firebase FCM token pendiente sin idDispositivo o clave.');
+    return;
+  }
+
+  if (!_isPendingFirebaseMessagingTokenStatus(status)) {
+    return;
+  }
+
+  _isSendingFirebaseMessagingToken = true;
+  final datosServidorService = DatosServidorService();
+  try {
+    final response = await datosServidorService.registraClaveFmc(
+      idDispositivo: deviceId,
+      clave: token,
+    );
+    if (_isOkServerResponse(response)) {
+      final currentToken =
+          prefs.getString(_firebaseMessagingTokenKey)?.trim() ?? '';
+      if (currentToken == token) {
+        await prefs.setString(
+          _firebaseMessagingTokenStatusKey,
+          _firebaseMessagingTokenStatusSent,
+        );
+        debugPrint('Firebase FCM token marcado como enviada.');
+      } else {
+        debugPrint('Firebase FCM token cambiado antes de marcar enviada.');
+      }
+    } else {
+      debugPrint('registra_clave_FMC respuesta inesperada: $response');
+    }
+  } catch (error) {
+    debugPrint('registra_clave_FMC fallo: $error');
+  } finally {
+    datosServidorService.close();
+    _isSendingFirebaseMessagingToken = false;
+  }
+}
+
+bool _isOkServerResponse(String response) {
+  try {
+    final decoded = jsonDecode(response);
+    return decoded is Map && '${decoded['rpta'] ?? ''}'.trim() == 'ok';
+  } catch (_) {
+    return false;
+  }
 }
 
 class GolfScorecardApp extends StatelessWidget {
@@ -4522,6 +4633,13 @@ class _LeagueListItem extends StatelessWidget {
   final VoidCallback onViewParticipants;
   final VoidCallback onInvite;
 
+  void _showLeagueInformation(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => _LeagueInformationDialog(league: league),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final creator = league.alias.isEmpty ? 'Usuario' : league.alias;
@@ -4549,9 +4667,23 @@ class _LeagueListItem extends StatelessWidget {
             emptyTitle: 'Liguilla sin titulo',
           ),
           const SizedBox(height: 6),
-          Text(
-            'Creada por $creator',
-            style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  'Creada por $creator',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6C737D),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _LeagueInformationButton(
+                onPressed: () => _showLeagueInformation(context),
+              ),
+            ],
           ),
           if (league.movil.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -4608,6 +4740,187 @@ class _LeagueListItem extends StatelessWidget {
       ),
     );
   }
+}
+
+class _LeagueInformationButton extends StatelessWidget {
+  const _LeagueInformationButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: 'Información de liguilla',
+      icon: const Icon(Icons.info_outline, size: 20),
+      color: const Color(0xFF567B37),
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+      padding: EdgeInsets.zero,
+    );
+  }
+}
+
+class _LeagueInformationDialog extends StatelessWidget {
+  const _LeagueInformationDialog({required this.league});
+
+  final _LeagueSummary league;
+
+  @override
+  Widget build(BuildContext context) {
+    final informationItems = _leagueInformationItems(league);
+
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.info_outline, color: Color(0xFF567B37)),
+          SizedBox(width: 10),
+          Expanded(child: Text('Información de liguilla')),
+        ],
+      ),
+      content: SizedBox(
+        width: 430,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var index = 0; index < informationItems.length; index++) ...[
+                _LeagueInformationRow(item: informationItems[index]),
+                if (index != informationItems.length - 1)
+                  const Divider(height: 18, color: Color(0xFFE4DDD3)),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+      ],
+    );
+  }
+}
+
+class _LeagueInformationRow extends StatelessWidget {
+  const _LeagueInformationRow({required this.item});
+
+  final _LeagueInformationItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            item.label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF6C737D),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            item.value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF545B66),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueInformationItem {
+  const _LeagueInformationItem({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
+List<_LeagueInformationItem> _leagueInformationItems(_LeagueSummary league) {
+  return [
+    _LeagueInformationItem(
+      label: 'Titulo',
+      value: _leagueTextValue(league.titulo, emptyLabel: 'Sin titulo'),
+    ),
+    _LeagueInformationItem(
+      label: 'Jornadas',
+      value: _leagueNumberValue(league.jornadas),
+    ),
+    _LeagueInformationItem(
+      label: 'Minimo jugadores por jornada',
+      value: _leagueNumberValue(league.minimoJugadoresJornada),
+    ),
+    _LeagueInformationItem(
+      label: 'Participacion minima jugador',
+      value: _leagueNumberValue(league.participacionMinimaJugador),
+    ),
+    _LeagueInformationItem(
+      label: 'Los jugadores pueden invitar',
+      value: _leagueYesNoValue(league.puedenInvitar),
+    ),
+    _LeagueInformationItem(
+      label: 'Aplicar handicap en partidas',
+      value: _leagueYesNoValue(league.aplicarHandicapPartidas),
+    ),
+  ];
+}
+
+String _leagueTextValue(String value, {String emptyLabel = 'Sin dato'}) {
+  final trimmedValue = value.trim();
+  return trimmedValue.isEmpty ? emptyLabel : trimmedValue;
+}
+
+String _leagueNumberValue(String value) {
+  final trimmedValue = value.trim();
+  if (trimmedValue.isEmpty) {
+    return 'Sin dato';
+  }
+
+  return trimmedValue == '-1' ? 'Indefinido' : trimmedValue;
+}
+
+String _leaguePlainNumberValue(String value) {
+  final trimmedValue = value.trim();
+  if (trimmedValue.isEmpty) {
+    return '';
+  }
+
+  final number = double.tryParse(trimmedValue);
+  if (number != null && number == number.roundToDouble()) {
+    return number.toInt().toString();
+  }
+
+  return trimmedValue;
+}
+
+String _leagueYesNoValue(String value) {
+  final normalizedValue = value.trim().toUpperCase();
+  if (normalizedValue == '1' ||
+      normalizedValue == 'S' ||
+      normalizedValue == 'SI' ||
+      normalizedValue == 'SÍ' ||
+      normalizedValue == 'TRUE') {
+    return 'Si';
+  }
+
+  if (normalizedValue == '0' ||
+      normalizedValue == 'N' ||
+      normalizedValue == 'NO' ||
+      normalizedValue == 'FALSE') {
+    return 'No';
+  }
+
+  return 'Sin dato';
 }
 
 class _LeagueStatusPill extends StatelessWidget {
@@ -4920,6 +5233,8 @@ class _LeagueParticipantsScreenState extends State<_LeagueParticipantsScreen> {
   @override
   Widget build(BuildContext context) {
     final leagueTitle = widget.league.titulo.trim();
+    final showInitialHandicap =
+        _leagueYesNoValue(widget.league.aplicarHandicapPartidas) == 'Si';
 
     return _ReservationScreenFrame(
       title: 'Participantes',
@@ -4971,7 +5286,10 @@ class _LeagueParticipantsScreenState extends State<_LeagueParticipantsScreen> {
           )
         else
           for (final participant in _participants) ...[
-            _LeagueParticipantItem(participant: participant),
+            _LeagueParticipantItem(
+              participant: participant,
+              showInitialHandicap: showInitialHandicap,
+            ),
             const SizedBox(height: 10),
           ],
       ],
@@ -4980,12 +5298,20 @@ class _LeagueParticipantsScreenState extends State<_LeagueParticipantsScreen> {
 }
 
 class _LeagueParticipantItem extends StatelessWidget {
-  const _LeagueParticipantItem({required this.participant});
+  const _LeagueParticipantItem({
+    required this.participant,
+    required this.showInitialHandicap,
+  });
 
   final _LeagueParticipant participant;
+  final bool showInitialHandicap;
 
   @override
   Widget build(BuildContext context) {
+    final initialHandicap = _leaguePlainNumberValue(
+      participant.handicapInicial,
+    );
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -5011,10 +5337,53 @@ class _LeagueParticipantItem extends StatelessWidget {
               style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
             ),
           ],
+          if (showInitialHandicap && initialHandicap.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Handicap inicial: $initialHandicap',
+              style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
+            ),
+          ],
           const SizedBox(height: 10),
-          Center(child: _LeagueStatusPill(label: participant.statusLabel)),
+          _LeagueParticipantStatusLabel(participant: participant),
         ],
       ),
+    );
+  }
+}
+
+class _LeagueParticipantStatusLabel extends StatelessWidget {
+  const _LeagueParticipantStatusLabel({required this.participant});
+
+  final _LeagueParticipant participant;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = participant.hasRejected
+        ? const Color(0xFF9D433D)
+        : participant.isPending
+        ? const Color(0xFF8A6B2F)
+        : const Color(0xFF486536);
+    final icon = participant.hasRejected
+        ? Icons.cancel_outlined
+        : participant.isPending
+        ? Icons.schedule
+        : Icons.check_circle_outline;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
+        Text(
+          participant.statusLabel,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -5212,6 +5581,12 @@ class _CreateLeagueScreen extends StatefulWidget {
 }
 
 class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
+  static const _applyHandicapHelpTitle = 'Aplicar handicap en las partidas';
+  static const _applyHandicapHelpMessage =
+      'Partiendo del handicap inicial de cada jugador, se irá '
+      'modificando segun los resultados de cada partida jugada '
+      '(Se debe introducir handicap inicial por jugador)';
+
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _roundsController = TextEditingController();
@@ -5222,6 +5597,7 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
   bool _minimumPlayersAreUndefined = false;
   bool _playersCanInvite = true;
   bool _hostParticipates = true;
+  bool _applyHandicapInMatches = false;
   bool _isSaving = false;
   String? _saveError;
 
@@ -5258,6 +5634,7 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
             .trim(),
         puedenInvitar: _playersCanInvite ? '1' : '0',
         participaAnfitrion: _hostParticipates ? 'S' : 'N',
+        aplicarHandicapPartidas: _applyHandicapInMatches ? '1' : '0',
         mensajeInvitacion: _invitationMessageController.text.trim(),
       );
       debugPrint('crearLiguilla: $response');
@@ -5362,6 +5739,25 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
     return null;
   }
 
+  String? _minimumPlayerParticipation(String? value) {
+    final numberError = _oneOrTwoDigitNumber(value);
+    if (numberError != null || _roundsAreUndefined) {
+      return numberError;
+    }
+
+    final minimumParticipation = int.tryParse(value?.trim() ?? '');
+    final rounds = int.tryParse(_roundsController.text.trim());
+    if (minimumParticipation == null || rounds == null) {
+      return null;
+    }
+
+    if (minimumParticipation > rounds) {
+      return 'Debe ser menor o igual que Jornadas';
+    }
+
+    return null;
+  }
+
   Widget _undefinedToggle({
     required bool value,
     required ValueChanged<bool?> onChanged,
@@ -5436,8 +5832,8 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
                     ? null
                     : _oneOrTwoDigitNumber,
                 decoration: _inputDecoration(
-                  label: 'Minimo jugadores jornada',
-                  helpTitle: 'Minimo jugadores jornada',
+                  label: 'Minimo jugadores por jornada',
+                  helpTitle: 'Minimo jugadores por jornada',
                   helpMessage:
                       'Define cuántos jugadores deben participar como mínimo para '
                       'que una jornada compute en la liguilla. Si no quieres fijar '
@@ -5460,10 +5856,10 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
                 controller: _minimumPlayerParticipationController,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                validator: _oneOrTwoDigitNumber,
+                validator: _minimumPlayerParticipation,
                 decoration: _inputDecoration(
-                  label: 'Participacion minima jugador',
-                  helpTitle: 'Participacion minima jugador',
+                  label: 'Participacion en jornadas minima jugador',
+                  helpTitle: 'Participacion en jornadas minima jugador',
                   helpMessage:
                       'Indica en cuántas jornadas como mínimo debe participar '
                       'cada jugador para que su clasificación cuente en la liguilla.',
@@ -5471,7 +5867,7 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
               ),
               const SizedBox(height: 16),
               _LeagueChoiceField(
-                label: 'Pueden invitar',
+                label: 'Los jugadores pueden invitar a otros',
                 value: _playersCanInvite,
                 onChanged: (value) {
                   setState(() {
@@ -5479,7 +5875,7 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
                   });
                 },
                 helpButton: _helpButton(
-                  title: 'Pueden invitar',
+                  title: 'Los jugadores pueden invitar a otros',
                   message:
                       'Si está en Sí, los jugadores podrán invitar a otros. '
                       'Si está en No, solo podrá añadir jugadores quien organice.',
@@ -5513,6 +5909,26 @@ class _CreateLeagueScreenState extends State<_CreateLeagueScreen> {
                   message:
                       'Marca Sí si además de organizar la liguilla también vas '
                       'a jugarla. Marca No si solo la estás creando para otros jugadores.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              _LeagueChoiceField(
+                label: _applyHandicapHelpTitle,
+                value: _applyHandicapInMatches,
+                onChanged: (value) {
+                  setState(() {
+                    _applyHandicapInMatches = value;
+                  });
+                  if (value) {
+                    _showHelp(
+                      _applyHandicapHelpTitle,
+                      _applyHandicapHelpMessage,
+                    );
+                  }
+                },
+                helpButton: _helpButton(
+                  title: _applyHandicapHelpTitle,
+                  message: _applyHandicapHelpMessage,
                 ),
               ),
             ],
@@ -6556,6 +6972,11 @@ class _LeagueSummary {
     required this.puedenInvitar,
     required this.creador,
     required this.invitadoPor,
+    required this.jornadas,
+    required this.minimoJugadoresJornada,
+    required this.participacionMinimaJugador,
+    required this.participaAnfitrion,
+    required this.aplicarHandicapPartidas,
   });
 
   final String idLiguilla;
@@ -6568,6 +6989,11 @@ class _LeagueSummary {
   final String puedenInvitar;
   final String creador;
   final String invitadoPor;
+  final String jornadas;
+  final String minimoJugadoresJornada;
+  final String participacionMinimaJugador;
+  final String participaAnfitrion;
+  final String aplicarHandicapPartidas;
 
   bool get isPending => pendienteDecidir.trim().toUpperCase() == 'S';
   bool get isFinished => acabada.trim().isNotEmpty;
@@ -6606,6 +7032,11 @@ class _LeagueSummary {
       puedenInvitar: puedenInvitar,
       creador: creador,
       invitadoPor: invitadoPor,
+      jornadas: jornadas,
+      minimoJugadoresJornada: minimoJugadoresJornada,
+      participacionMinimaJugador: participacionMinimaJugador,
+      participaAnfitrion: participaAnfitrion,
+      aplicarHandicapPartidas: aplicarHandicapPartidas,
     );
   }
 
@@ -6640,6 +7071,14 @@ class _LeagueSummary {
       creador: '${map['creador'] ?? ''}'.trim(),
       invitadoPor: '${map['invitado_por'] ?? map['invitador_por'] ?? ''}'
           .trim(),
+      jornadas: '${map['jornadas'] ?? ''}'.trim(),
+      minimoJugadoresJornada: '${map['minimo_jugadores_jornada'] ?? ''}'.trim(),
+      participacionMinimaJugador:
+          '${map['participacion_minima_jugador'] ?? map['paticipacion_minima_jugador'] ?? ''}'
+              .trim(),
+      participaAnfitrion: '${map['participa_anfitrion'] ?? ''}'.trim(),
+      aplicarHandicapPartidas: '${map['aplicar_handicap_partidas'] ?? ''}'
+          .trim(),
     );
   }
 }
@@ -6657,6 +7096,7 @@ class _LeagueParticipant {
     required this.fechaAceptacion,
     required this.fechaRechazo,
     required this.pendienteDecidir,
+    required this.handicapInicial,
   });
 
   final String idUsuario;
@@ -6665,6 +7105,7 @@ class _LeagueParticipant {
   final String fechaAceptacion;
   final String fechaRechazo;
   final String pendienteDecidir;
+  final String handicapInicial;
 
   bool get isPending => pendienteDecidir.trim().toUpperCase() == 'S';
   bool get hasAccepted => _backendDateLikeValueIsSet(fechaAceptacion);
@@ -6700,6 +7141,7 @@ class _LeagueParticipant {
       fechaAceptacion: '${map['fecha_aceptacion'] ?? ''}'.trim(),
       fechaRechazo: '${map['fecha_rechazo'] ?? ''}'.trim(),
       pendienteDecidir: '${map['pendiente_decidir'] ?? ''}'.trim(),
+      handicapInicial: '${map['handicap_inicial'] ?? ''}'.trim(),
     );
   }
 }

@@ -208,9 +208,9 @@ void main() {
           leaguesResponse:
               "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000','pendiente_decidir':'S','acabada':'','fecha_rechazo':''}]",
           invitedLeagueResponse:
-              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530','fecha_rechazo':'','pendiente_decidir':'N'},"
-              "{'idUsuario':'2','alias':'Luis','movil':'600222222','fecha_aceptacion':'','fecha_rechazo':'','pendiente_decidir':'S'},"
-              "{'idUsuario':'3','alias':'Marta','movil':'600333333','fecha_aceptacion':'','fecha_rechazo':'260511111530','pendiente_decidir':'N'}]",
+              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530','fecha_rechazo':'','pendiente_decidir':'N','handicap_inicial':12},"
+              "{'idUsuario':'2','alias':'Luis','movil':'600222222','fecha_aceptacion':'','fecha_rechazo':'','pendiente_decidir':'S','handicap_inicial':18},"
+              "{'idUsuario':'3','alias':'Marta','movil':'600333333','fecha_aceptacion':'','fecha_rechazo':'260511111530','pendiente_decidir':'N','handicap_inicial':24}]",
         ),
       ),
     );
@@ -234,6 +234,7 @@ void main() {
     expect(find.text('Marta'), findsOneWidget);
     expect(find.text('No participa'), findsOneWidget);
     expect(find.text('No participa 11/05/2026'), findsNothing);
+    expect(find.textContaining('Handicap inicial'), findsNothing);
     expect(find.widgetWithText(OutlinedButton, 'Volver'), findsOneWidget);
 
     final participantsUri = requests.firstWhere(
@@ -243,6 +244,87 @@ void main() {
       'accion': 'obtener_invitados_liguilla',
       'idLiguilla': '7',
     });
+  });
+
+  testWidgets('shows initial handicap in participants when league applies it', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','aplicar_handicap_partidas':'S'}]",
+          invitedLeagueResponse:
+              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530',"
+              "'fecha_rechazo':'','pendiente_decidir':'N','handicap_inicial':12.0},"
+              "{'idUsuario':'2','alias':'Luis','movil':'600222222','fecha_aceptacion':'260511101530',"
+              "'fecha_rechazo':'','pendiente_decidir':'N','handicap_inicial':18.5}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Participantes'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Handicap inicial: 12'), findsOneWidget);
+    expect(find.text('Handicap inicial: 18.5'), findsOneWidget);
+  });
+
+  testWidgets('shows league information dialog from league card', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','pueden_invitar':0,"
+              "'creador':123,'jornadas':'3','minimo_jugadores_jornada':'-1',"
+              "'participacion_minima_jugador':'-1','participa_anfitrion':'S',"
+              "'aplicar_handicap_partidas':'N','mensaje_invitacion':'Te invito a jugar'}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Información de liguilla'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Información de liguilla'), findsOneWidget);
+    expect(find.text('Titulo'), findsOneWidget);
+    expect(find.text('Jornadas'), findsOneWidget);
+    expect(find.text('Minimo jugadores por jornada'), findsOneWidget);
+    expect(find.text('Participacion minima jugador'), findsOneWidget);
+    expect(find.text('Los jugadores pueden invitar'), findsOneWidget);
+    expect(find.text('Participa anfitrion'), findsNothing);
+    expect(find.text('Aplicar handicap en partidas'), findsOneWidget);
+    expect(find.text('Indefinido'), findsNWidgets(2));
+    expect(find.text('No'), findsNWidgets(2));
+    expect(find.text('Mensaje invitacion'), findsNothing);
+    expect(find.text('Te invito a jugar'), findsNothing);
+
+    await tester.tap(find.text('Cerrar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Información de liguilla'), findsNothing);
   });
 
   testWidgets('opens league invitation when players can invite', (
@@ -690,14 +772,18 @@ void main() {
     expect(find.text('Crear Liguilla'), findsOneWidget);
     expect(find.text('Titulo de liguilla'), findsOneWidget);
     expect(find.text('Jornadas'), findsOneWidget);
-    expect(find.text('Minimo jugadores jornada'), findsOneWidget);
-    expect(find.text('Participacion minima jugador'), findsOneWidget);
-    expect(find.text('Pueden invitar'), findsOneWidget);
+    expect(find.text('Minimo jugadores por jornada'), findsOneWidget);
+    expect(
+      find.text('Participacion en jornadas minima jugador'),
+      findsOneWidget,
+    );
+    expect(find.text('Los jugadores pueden invitar a otros'), findsOneWidget);
     expect(find.text('Mensaje invitacion'), findsOneWidget);
     expect(find.text('¿ Participas tu en el torneo ?'), findsOneWidget);
+    expect(find.text('Aplicar handicap en las partidas'), findsOneWidget);
     expect(find.text('Indefinido'), findsNWidgets(2));
-    expect(find.text('Si'), findsNWidgets(2));
-    expect(find.text('No'), findsNWidgets(2));
+    expect(find.text('Si'), findsNWidgets(3));
+    expect(find.text('No'), findsNWidgets(3));
     expect(find.text('Guardar'), findsOneWidget);
     expect(find.text('Cancelar'), findsOneWidget);
 
@@ -768,6 +854,45 @@ void main() {
     expect(find.text('Liguilla creada ok'), findsNothing);
   });
 
+  testWidgets('rejects minimum participation greater than league rounds', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openCreateLeagueFromHome(tester);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Liga jueves');
+    await tester.enterText(find.byType(TextFormField).at(1), '3');
+    await tester.enterText(find.byType(TextFormField).at(2), '4');
+    await tester.enterText(find.byType(TextFormField).at(3), '4');
+    await tester.enterText(
+      find.byType(TextFormField).at(4),
+      'Te invito a la liguilla',
+    );
+
+    await tester.ensureVisible(find.text('Guardar'));
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Debe ser menor o igual que Jornadas'), findsOneWidget);
+    expect(
+      requests.where(
+        (uri) => uri.queryParameters['accion'] == 'crear_liguilla',
+      ),
+      isEmpty,
+    );
+  });
+
   testWidgets('creates league and returns to leagues after save', (
     WidgetTester tester,
   ) async {
@@ -786,7 +911,7 @@ void main() {
     await _openCreateLeagueFromHome(tester);
 
     await tester.enterText(find.byType(TextFormField).at(0), 'Liga jueves');
-    await tester.enterText(find.byType(TextFormField).at(1), '8');
+    await tester.enterText(find.byType(TextFormField).at(1), '3');
     await tester.enterText(find.byType(TextFormField).at(2), '4');
     await tester.enterText(find.byType(TextFormField).at(3), '3');
     final inviteNo = find.descendant(
@@ -809,6 +934,20 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(hostNo);
     await tester.pumpAndSettle();
+    final handicapYes = find.descendant(
+      of: find.byType(SegmentedButton<bool>).at(2),
+      matching: find.text('Si'),
+    );
+    await tester.ensureVisible(handicapYes);
+    await tester.pumpAndSettle();
+    await tester.tap(handicapYes);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Partiendo del handicap inicial de cada jugador'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Entendido'));
+    await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('Guardar'));
     await tester.tap(find.text('Guardar'));
@@ -824,11 +963,12 @@ void main() {
       'accion': 'crear_liguilla',
       'idUsuario': '123',
       'titulo': 'LIGA JUEVES',
-      'jornadas': '8',
+      'jornadas': '3',
       'minimo_jugadores_jornada': '4',
       'participacion_minima_jugador': '3',
       'pueden_invitar': '0',
       'participa_anfitrion': 'N',
+      'aplicar_handicap_partidas': '1',
       'mensaje_invitacion': 'Te invito a la liguilla',
     });
   });
@@ -878,6 +1018,7 @@ void main() {
     );
     expect(createLeagueUri.queryParameters['pueden_invitar'], '1');
     expect(createLeagueUri.queryParameters['participa_anfitrion'], 'S');
+    expect(createLeagueUri.queryParameters['aplicar_handicap_partidas'], '0');
   });
 
   testWidgets('opens statistics with current user score rows', (

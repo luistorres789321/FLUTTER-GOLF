@@ -133,6 +133,17 @@ class DatosServidorService {
     });
   }
 
+  Future<String> registraClaveFmc({
+    required String idDispositivo,
+    required String clave,
+  }) {
+    return _getTexto({
+      'accion': 'registra_clave_FMC',
+      'idDispositivo': idDispositivo,
+      'clave': clave,
+    });
+  }
+
   Future<String> yaExisteAlias(String alias) {
     return _getTexto({'accion': 'ya_existe_alias', 'alias': alias});
   }
@@ -234,6 +245,7 @@ class DatosServidorService {
     required String participacionMinimaJugador,
     required String puedenInvitar,
     required String participaAnfitrion,
+    required String aplicarHandicapPartidas,
     required String mensajeInvitacion,
   }) {
     return _getTexto({
@@ -245,6 +257,7 @@ class DatosServidorService {
       'participacion_minima_jugador': participacionMinimaJugador,
       'pueden_invitar': puedenInvitar,
       'participa_anfitrion': participaAnfitrion,
+      'aplicar_handicap_partidas': aplicarHandicapPartidas,
       'mensaje_invitacion': mensajeInvitacion,
     });
   }
@@ -264,6 +277,20 @@ class DatosServidorService {
     return _getTexto({
       'accion': 'obtener_invitados_liguilla',
       'idLiguilla': idLiguilla,
+    });
+  }
+
+  /// [idPartida] es texto: las partidas pueden tener ids alfanumericos.
+  Future<String> asociaPartidaALiguilla({
+    required String idLiguilla,
+    required String idPartida,
+    required String jornada,
+  }) {
+    return _getTexto({
+      'accion': 'asocia_partida_a_liguilla',
+      'idLiguilla': idLiguilla,
+      'idPartida': idPartida,
+      'jornada': jornada,
     });
   }
 

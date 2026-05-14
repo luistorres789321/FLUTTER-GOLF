@@ -454,6 +454,7 @@ void main() {
         participacionMinimaJugador: '3',
         puedenInvitar: '1',
         participaAnfitrion: 'S',
+        aplicarHandicapPartidas: '0',
         mensajeInvitacion: 'Te invito a la liguilla',
       );
 
@@ -467,6 +468,7 @@ void main() {
         'participacion_minima_jugador': '3',
         'pueden_invitar': '1',
         'participa_anfitrion': 'S',
+        'aplicar_handicap_partidas': '0',
         'mensaje_invitacion': 'Te invito a la liguilla',
       });
     });
@@ -525,6 +527,31 @@ void main() {
       expect(requestedUri.queryParameters, {
         'accion': 'obtener_invitados_liguilla',
         'idLiguilla': '7',
+      });
+    });
+
+    test('construye la query de asociaPartidaALiguilla', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.asociaPartidaALiguilla(
+        idLiguilla: '7',
+        idPartida: 'ABC123XYZ9',
+        jornada: '3',
+      );
+
+      expect(result, '{"rpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'asocia_partida_a_liguilla',
+        'idLiguilla': '7',
+        'idPartida': 'ABC123XYZ9',
+        'jornada': '3',
       });
     });
 
