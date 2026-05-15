@@ -280,6 +280,69 @@ void main() {
     expect(find.text('Handicap inicial: 18.5'), findsOneWidget);
   });
 
+  testWidgets('opens league rounds screen and paginates', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+          leagueRoundsResponse:
+              '[{"jornada":1,"usuarios":[{"idUsuario":"4","idPartida":"PK1","dif_golpes":98,"hay_partida":S},'
+              '{"idUsuario":"11","idPartida":"","dif_golpes":0,"hay_partida":N}]},'
+              '{"jornada":2,"usuarios":[{"idUsuario":"8","idPartida":"PK2","dif_golpes":113,"hay_partida":S}]}]',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Ver Jornadas'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Ver Jornadas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jornadas'), findsOneWidget);
+    expect(find.text('TORNEO VERANO'), findsOneWidget);
+    expect(find.text('Jornada 1 de 2'), findsOneWidget);
+    expect(find.text('Jornada 1'), findsOneWidget);
+    expect(find.text('Usuario 4'), findsOneWidget);
+    expect(find.text('Partida PK1'), findsOneWidget);
+    expect(find.text('Usuario 11'), findsOneWidget);
+    expect(find.text('Sin partida'), findsWidgets);
+
+    final roundsUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'obtener_jornadas',
+    );
+    expect(roundsUri.queryParameters, {
+      'accion': 'obtener_jornadas',
+      'idLiguilla': '7',
+    });
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Siguiente'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jornada 2 de 2'), findsOneWidget);
+    expect(find.text('Usuario 8'), findsOneWidget);
+    expect(find.text('Partida PK2'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Anterior'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jornada 1 de 2'), findsOneWidget);
+  });
+
   testWidgets('shows league information dialog from league card', (
     WidgetTester tester,
   ) async {
@@ -2952,6 +3015,8 @@ DatosServidorService _existingFieldsService({
   String pendingInvitationsResponse = "{'invitaciones':0,'liguillas':[]}",
   String invitedLeagueResponse = '[]',
   int invitedLeagueStatusCode = 200,
+  String leagueRoundsResponse = '[]',
+  int leagueRoundsStatusCode = 200,
 }) {
   final annotatedInvitationGames = <String>{};
 
@@ -3003,6 +3068,10 @@ DatosServidorService _existingFieldsService({
 
       if (accion == 'obtener_invitados_liguilla') {
         return http.Response(invitedLeagueResponse, invitedLeagueStatusCode);
+      }
+
+      if (accion == 'obtener_jornadas') {
+        return http.Response(leagueRoundsResponse, leagueRoundsStatusCode);
       }
 
       if (accion == 'decision_participacion') {

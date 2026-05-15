@@ -280,6 +280,10 @@ class DatosServidorService {
     });
   }
 
+  Future<String> obtenerJornadas(String idLiguilla) {
+    return _getTexto({'accion': 'obtener_jornadas', 'idLiguilla': idLiguilla});
+  }
+
   /// [idPartida] es texto: las partidas pueden tener ids alfanumericos.
   Future<String> asociaPartidaALiguilla({
     required String idLiguilla,

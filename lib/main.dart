@@ -4397,6 +4397,17 @@ class _LeaguesScreenState extends State<_LeaguesScreen> {
     );
   }
 
+  void _openLeagueRounds(_LeagueSummary league) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _LeagueRoundsScreen(
+          datosServidorService: widget.datosServidorService,
+          league: league,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openLeagueInvitation(_LeagueSummary league) async {
     final invited = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
@@ -4597,6 +4608,7 @@ class _LeaguesScreenState extends State<_LeaguesScreen> {
               onLeaveAcceptedLeague: () => _confirmLeaveAcceptedLeague(league),
               onRejoinLeague: () => _sendParticipationDecision(league, 'S'),
               onViewParticipants: () => _openLeagueParticipants(league),
+              onViewRounds: () => _openLeagueRounds(league),
               onInvite: () => _openLeagueInvitation(league),
             ),
             const SizedBox(height: 10),
@@ -4618,6 +4630,7 @@ class _LeagueListItem extends StatelessWidget {
     required this.onLeaveAcceptedLeague,
     required this.onRejoinLeague,
     required this.onViewParticipants,
+    required this.onViewRounds,
     required this.onInvite,
   });
 
@@ -4631,6 +4644,7 @@ class _LeagueListItem extends StatelessWidget {
   final VoidCallback onLeaveAcceptedLeague;
   final VoidCallback onRejoinLeague;
   final VoidCallback onViewParticipants;
+  final VoidCallback onViewRounds;
   final VoidCallback onInvite;
 
   void _showLeagueInformation(BuildContext context) {
@@ -4701,7 +4715,17 @@ class _LeagueListItem extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _LeagueParticipantsButton(onPressed: onViewParticipants),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _LeagueParticipantsButton(onPressed: onViewParticipants),
+                      if (canInvite) _LeagueInviteButton(onPressed: onInvite),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _LeagueRoundsButton(onPressed: onViewRounds),
                   if (league.isRejected) ...[
                     const SizedBox(height: 8),
                     _LeagueRejoinButton(
@@ -4711,7 +4735,6 @@ class _LeagueListItem extends StatelessWidget {
                   ],
                 ],
               ),
-              if (canInvite) _LeagueInviteButton(onPressed: onInvite),
               if (league.isPending) ...[
                 _LeagueAcceptInvitationButton(
                   isLoading: isDeciding,
@@ -5039,6 +5062,32 @@ class _LeagueInviteButton extends StatelessWidget {
   }
 }
 
+class _LeagueRoundsButton extends StatelessWidget {
+  const _LeagueRoundsButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF6B432D),
+        side: const BorderSide(color: Color(0xFFC6A174)),
+        backgroundColor: const Color(0xFFFFF8EF),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        minimumSize: const Size(0, 34),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: const Icon(Icons.calendar_month, size: 17),
+      label: const Text(
+        'Ver Jornadas',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
 class _LeagueRejoinButton extends StatelessWidget {
   const _LeagueRejoinButton({required this.isLoading, required this.onPressed});
 
@@ -5293,6 +5342,463 @@ class _LeagueParticipantsScreenState extends State<_LeagueParticipantsScreen> {
             const SizedBox(height: 10),
           ],
       ],
+    );
+  }
+}
+
+class _LeagueRoundsScreen extends StatefulWidget {
+  const _LeagueRoundsScreen({
+    required this.datosServidorService,
+    required this.league,
+  });
+
+  final DatosServidorService datosServidorService;
+  final _LeagueSummary league;
+
+  @override
+  State<_LeagueRoundsScreen> createState() => _LeagueRoundsScreenState();
+}
+
+class _LeagueRoundsScreenState extends State<_LeagueRoundsScreen> {
+  bool _isLoading = true;
+  String? _error;
+  List<_LeagueRound> _rounds = const [];
+  int _currentRoundIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadRounds());
+  }
+
+  Future<void> _loadRounds() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.obtenerJornadas(
+        widget.league.idLiguilla,
+      );
+      final rounds = _leagueRoundsFromResponse(response);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _rounds = rounds;
+        _currentRoundIndex = 0;
+        _isLoading = false;
+      });
+    } catch (error) {
+      debugPrint('obtenerJornadas fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('obtenerJornadas backend body: ${error.body}');
+      }
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = false;
+        _error = 'No se pudieron cargar las jornadas.';
+      });
+    }
+  }
+
+  void _showPreviousRound() {
+    setState(() {
+      _currentRoundIndex = max(0, _currentRoundIndex - 1);
+    });
+  }
+
+  void _showNextRound() {
+    setState(() {
+      _currentRoundIndex = min(_rounds.length - 1, _currentRoundIndex + 1);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final leagueTitle = widget.league.titulo.trim();
+
+    return _ReservationScreenFrame(
+      title: 'Jornadas',
+      maxWidth: 680,
+      showBackButton: true,
+      backLabel: 'Volver',
+      children: [
+        if (leagueTitle.isNotEmpty) ...[
+          _LeagueTitleLabel(
+            title: leagueTitle,
+            emptyTitle: 'Liguilla',
+            textAlign: TextAlign.center,
+            mainAxisAlignment: MainAxisAlignment.center,
+          ),
+          const SizedBox(height: 18),
+        ],
+        if (_isLoading)
+          const SizedBox(
+            height: 170,
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFF567B37)),
+            ),
+          )
+        else if (_error != null) ...[
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF9D433D)),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: _loadRounds,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF567B37),
+              side: const BorderSide(color: Color(0xFF567B37)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Reintentar'),
+          ),
+        ] else if (_rounds.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 36),
+            child: Text(
+              'No hay jornadas',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Color(0xFF6C737D)),
+            ),
+          )
+        else ...[
+          _LeagueRoundPager(
+            currentRoundIndex: _currentRoundIndex,
+            totalRounds: _rounds.length,
+            onPrevious: _currentRoundIndex == 0 ? null : _showPreviousRound,
+            onNext: _currentRoundIndex == _rounds.length - 1
+                ? null
+                : _showNextRound,
+          ),
+          const SizedBox(height: 14),
+          _LeagueRoundCard(round: _rounds[_currentRoundIndex]),
+        ],
+      ],
+    );
+  }
+}
+
+class _LeagueRoundPager extends StatelessWidget {
+  const _LeagueRoundPager({
+    required this.currentRoundIndex,
+    required this.totalRounds,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  final int currentRoundIndex;
+  final int totalRounds;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        OutlinedButton.icon(
+          onPressed: onPrevious,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF567B37),
+            side: const BorderSide(color: Color(0xFF8AA879)),
+            minimumSize: const Size(0, 42),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          icon: const Icon(Icons.chevron_left, size: 20),
+          label: const Text(
+            'Anterior',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3EFE7),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFD8D2C7)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+              child: Text(
+                'Jornada ${currentRoundIndex + 1} de $totalRounds',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF545B66),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: onNext,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF567B37),
+            minimumSize: const Size(0, 42),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          icon: const Icon(Icons.chevron_right, size: 20),
+          label: const Text(
+            'Siguiente',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LeagueRoundCard extends StatelessWidget {
+  const _LeagueRoundCard({required this.round});
+
+  final _LeagueRound round;
+
+  @override
+  Widget build(BuildContext context) {
+    final usersWithGame = round.users.where((user) => user.hasGame).length;
+    final usersWithoutGame = round.users.length - usersWithGame;
+    final bestScore = round.bestDifGolpesLabel;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(255, 255, 255, 0.82),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD8D2C7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.calendar_today, color: Color(0xFFB9834F)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Jornada ${round.jornadaLabel}',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _LeagueRoundStatPill(
+                label: 'Jugadores',
+                value: '${round.users.length}',
+              ),
+              _LeagueRoundStatPill(
+                label: 'Con partida',
+                value: '$usersWithGame',
+              ),
+              _LeagueRoundStatPill(
+                label: 'Sin partida',
+                value: '$usersWithoutGame',
+              ),
+              if (bestScore.isNotEmpty)
+                _LeagueRoundStatPill(label: 'Mejor dif.', value: bestScore),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFE4DDD3)),
+          const SizedBox(height: 12),
+          if (round.users.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 22),
+              child: Text(
+                'Sin jugadores en esta jornada',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, color: Color(0xFF6C737D)),
+              ),
+            )
+          else
+            for (var index = 0; index < round.users.length; index++) ...[
+              _LeagueRoundUserItem(user: round.users[index]),
+              if (index != round.users.length - 1) const SizedBox(height: 8),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueRoundStatPill extends StatelessWidget {
+  const _LeagueRoundStatPill({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF3E9),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD1DDC3)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF486536),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF6C737D),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LeagueRoundUserItem extends StatelessWidget {
+  const _LeagueRoundUserItem({required this.user});
+
+  final _LeagueRoundUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasGame = user.hasGame;
+    final color = hasGame ? const Color(0xFF486536) : const Color(0xFF9D433D);
+    final background = hasGame
+        ? const Color(0xFFF8FBF3)
+        : const Color(0xFFFFF4F2);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: hasGame ? const Color(0xFFD1DDC3) : const Color(0xFFE0A39E),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: hasGame
+                  ? const Color(0xFFE1ECD6)
+                  : const Color(0xFFFFDFDB),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              hasGame ? Icons.sports_golf : Icons.event_busy,
+              size: 20,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user.userLabel,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  hasGame ? user.gameLabel : 'Sin partida',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: hasGame
+                        ? const Color(0xFF6C737D)
+                        : const Color(0xFF9D433D),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          _LeagueRoundScoreBadge(user: user),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueRoundScoreBadge extends StatelessWidget {
+  const _LeagueRoundScoreBadge({required this.user});
+
+  final _LeagueRoundUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasGame = user.hasGame;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: hasGame ? const Color(0xFF235C3D) : const Color(0xFFFFE8E5),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              hasGame ? user.difGolpesLabel : 'N',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: hasGame ? Colors.white : const Color(0xFF9D433D),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              hasGame ? 'Dif.' : 'Estado',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: hasGame ? Colors.white70 : const Color(0xFF9D433D),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -7149,6 +7655,217 @@ class _LeagueParticipant {
 List<_LeagueParticipant> _leagueParticipantsFromResponse(String response) {
   final rows = _decodeMapRows(response, 0) ?? const [];
   return [for (final row in rows) ?_LeagueParticipant.fromMap(row)];
+}
+
+class _LeagueRound {
+  const _LeagueRound({required this.jornada, required this.users});
+
+  final int? jornada;
+  final List<_LeagueRoundUser> users;
+
+  String get jornadaLabel => jornada == null ? '-' : '$jornada';
+
+  String get bestDifGolpesLabel {
+    final scores = [
+      for (final user in users)
+        if (user.hasGame && user.difGolpes != null) user.difGolpes!,
+    ];
+    if (scores.isEmpty) {
+      return '';
+    }
+
+    scores.sort();
+    return '${scores.first}';
+  }
+
+  static _LeagueRound? fromMap(Map<String, dynamic> map) {
+    final userRows = _decodeLeagueRoundUserRows(
+      map['usuarios'] ?? map['jugadores'] ?? map['participantes'],
+      0,
+    );
+    final users = [
+      for (final row in userRows ?? const <Map<String, dynamic>>[])
+        ?_LeagueRoundUser.fromMap(row),
+    ];
+    final jornada = _intFromBackendValue(map['jornada']);
+
+    if (jornada == null && users.isEmpty) {
+      return null;
+    }
+
+    return _LeagueRound(jornada: jornada, users: users);
+  }
+}
+
+class _LeagueRoundUser {
+  const _LeagueRoundUser({
+    required this.idUsuario,
+    required this.idPartida,
+    required this.difGolpes,
+    required this.hayPartida,
+  });
+
+  final String idUsuario;
+  final String idPartida;
+  final int? difGolpes;
+  final String hayPartida;
+
+  bool get hasGame {
+    final normalizedValue = hayPartida.trim().toUpperCase();
+    if (normalizedValue == 'S' ||
+        normalizedValue == 'SI' ||
+        normalizedValue == '1' ||
+        normalizedValue == 'TRUE') {
+      return true;
+    }
+
+    if (normalizedValue == 'N' ||
+        normalizedValue == 'NO' ||
+        normalizedValue == '0' ||
+        normalizedValue == 'FALSE') {
+      return false;
+    }
+
+    return idPartida.trim().isNotEmpty;
+  }
+
+  String get userLabel {
+    final trimmedUserId = idUsuario.trim();
+    return trimmedUserId.isEmpty ? 'Usuario sin id' : 'Usuario $trimmedUserId';
+  }
+
+  String get gameLabel {
+    final trimmedGameId = idPartida.trim();
+    return trimmedGameId.isEmpty ? 'Partida sin id' : 'Partida $trimmedGameId';
+  }
+
+  String get difGolpesLabel => difGolpes == null ? '-' : '$difGolpes';
+
+  static _LeagueRoundUser? fromMap(Map<String, dynamic> map) {
+    final idUsuario = '${map['idUsuario'] ?? ''}'.trim();
+    final idPartida = '${map['idPartida'] ?? ''}'.trim();
+    final difGolpes = _intFromBackendValue(
+      map['dif_golpes'] ?? map['difGolpes'],
+    );
+    final hayPartida = '${map['hay_partida'] ?? map['hayPartida'] ?? ''}'
+        .trim();
+
+    if (idUsuario.isEmpty &&
+        idPartida.isEmpty &&
+        difGolpes == null &&
+        hayPartida.isEmpty) {
+      return null;
+    }
+
+    return _LeagueRoundUser(
+      idUsuario: idUsuario,
+      idPartida: idPartida,
+      difGolpes: difGolpes,
+      hayPartida: hayPartida,
+    );
+  }
+}
+
+List<_LeagueRound> _leagueRoundsFromResponse(String response) {
+  final rows = _decodeLeagueRoundRows(response, 0) ?? const [];
+  final rounds = [for (final row in rows) ?_LeagueRound.fromMap(row)];
+  rounds.sort((left, right) {
+    final leftRound = left.jornada ?? 0;
+    final rightRound = right.jornada ?? 0;
+    return leftRound.compareTo(rightRound);
+  });
+  return rounds;
+}
+
+List<Map<String, dynamic>>? _decodeLeagueRoundRows(Object? payload, int depth) {
+  if (depth > 5) {
+    return null;
+  }
+
+  if (payload is String) {
+    final trimmedPayload = payload.trim();
+    if (trimmedPayload.isEmpty) {
+      return const [];
+    }
+
+    final decoded =
+        _decodeJsonLikePayload(trimmedPayload) ??
+        _decodeJsonLikePayload(_quoteBareLeagueRoundFlags(trimmedPayload));
+    return decoded == null ? null : _decodeLeagueRoundRows(decoded, depth + 1);
+  }
+
+  if (payload is List) {
+    return payload.whereType<Map>().map(_stringKeyedMap).toList();
+  }
+
+  if (payload is Map) {
+    final map = _stringKeyedMap(payload);
+    for (final key in const ['jornadas', 'data', 'valor', 'json']) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
+
+      final rows = _decodeLeagueRoundRows(map[key], depth + 1);
+      if (rows != null) {
+        return rows;
+      }
+    }
+  }
+
+  return null;
+}
+
+List<Map<String, dynamic>>? _decodeLeagueRoundUserRows(
+  Object? payload,
+  int depth,
+) {
+  if (depth > 5) {
+    return null;
+  }
+
+  if (payload is String) {
+    final trimmedPayload = payload.trim();
+    if (trimmedPayload.isEmpty) {
+      return const [];
+    }
+
+    final decoded =
+        _decodeJsonLikePayload(trimmedPayload) ??
+        _decodeJsonLikePayload(_quoteBareLeagueRoundFlags(trimmedPayload));
+    return decoded == null
+        ? null
+        : _decodeLeagueRoundUserRows(decoded, depth + 1);
+  }
+
+  if (payload is List) {
+    return payload.whereType<Map>().map(_stringKeyedMap).toList();
+  }
+
+  if (payload is Map) {
+    final map = _stringKeyedMap(payload);
+    for (final key in const ['usuarios', 'jugadores', 'participantes']) {
+      if (!map.containsKey(key)) {
+        continue;
+      }
+
+      final rows = _decodeLeagueRoundUserRows(map[key], depth + 1);
+      if (rows != null) {
+        return rows;
+      }
+    }
+  }
+
+  return null;
+}
+
+String _quoteBareLeagueRoundFlags(String rawPayload) {
+  return rawPayload.replaceAllMapped(
+    RegExp(
+      r'''((?:['"]hay_partida['"]|hay_partida)\s*:\s*)([SN])(?=\s*[,}])''',
+      caseSensitive: false,
+    ),
+    (match) => '${match.group(1)}"${match.group(2)?.toUpperCase()}"',
+  );
 }
 
 bool _backendDateLikeValueIsSet(String value) {

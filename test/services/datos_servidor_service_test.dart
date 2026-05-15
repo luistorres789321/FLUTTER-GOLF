@@ -530,6 +530,25 @@ void main() {
       });
     });
 
+    test('construye la query de obtenerJornadas', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('[]', 200);
+        }),
+      );
+
+      final result = await service.obtenerJornadas('7');
+
+      expect(result, '[]');
+      expect(requestedUri.queryParameters, {
+        'accion': 'obtener_jornadas',
+        'idLiguilla': '7',
+      });
+    });
+
     test('construye la query de asociaPartidaALiguilla', () async {
       late Uri requestedUri;
 
