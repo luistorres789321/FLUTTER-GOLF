@@ -296,9 +296,9 @@ void main() {
               "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
               "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
           leagueRoundsResponse:
-              '[{"jornada":1,"usuarios":[{"idUsuario":"4","idPartida":"PK1","dif_golpes":98,"hay_partida":S},'
-              '{"idUsuario":"11","idPartida":"","dif_golpes":0,"hay_partida":N}]},'
-              '{"jornada":2,"usuarios":[{"idUsuario":"8","idPartida":"PK2","dif_golpes":113,"hay_partida":S}]}]',
+              '[{"jornada":1,"usuarios":[{"idUsuario":"4","idPartida":"PK1","jugador":"Ana Garcia","dif_golpes":98,"hay_partida":S},'
+              '{"idUsuario":"11","idPartida":"","jugador":"Luis Torres","dif_golpes":0,"hay_partida":N}]},'
+              '{"jornada":2,"usuarios":[{"idUsuario":"8","idPartida":"PK2","jugador":"Marta Ruiz","dif_golpes":113,"hay_partida":S}]}]',
         ),
       ),
     );
@@ -317,9 +317,12 @@ void main() {
     expect(find.text('TORNEO VERANO'), findsOneWidget);
     expect(find.text('Jornada 1 de 2'), findsOneWidget);
     expect(find.text('Jornada 1'), findsOneWidget);
-    expect(find.text('Usuario 4'), findsOneWidget);
-    expect(find.text('Partida PK1'), findsOneWidget);
-    expect(find.text('Usuario 11'), findsOneWidget);
+    expect(find.text('Ana Garcia'), findsOneWidget);
+    expect(find.text('Usuario 4'), findsNothing);
+    expect(find.text('Partida PK1'), findsNothing);
+    expect(find.text('Luis Torres'), findsOneWidget);
+    expect(find.text('Usuario 11'), findsNothing);
+    expect(find.text('Con partida'), findsWidgets);
     expect(find.text('Sin partida'), findsWidgets);
 
     final roundsUri = requests.firstWhere(
@@ -334,8 +337,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Jornada 2 de 2'), findsOneWidget);
-    expect(find.text('Usuario 8'), findsOneWidget);
-    expect(find.text('Partida PK2'), findsOneWidget);
+    expect(find.text('Marta Ruiz'), findsOneWidget);
+    expect(find.text('Usuario 8'), findsNothing);
+    expect(find.text('Partida PK2'), findsNothing);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Anterior'));
     await tester.pumpAndSettle();

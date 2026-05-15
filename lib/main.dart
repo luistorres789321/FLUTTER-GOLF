@@ -5075,14 +5075,14 @@ class _LeagueRoundsButton extends StatelessWidget {
         foregroundColor: const Color(0xFF6B432D),
         side: const BorderSide(color: Color(0xFFC6A174)),
         backgroundColor: const Color(0xFFFFF8EF),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        minimumSize: const Size(172, 46),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      icon: const Icon(Icons.calendar_month, size: 17),
+      icon: const Icon(Icons.calendar_month, size: 21),
       label: const Text(
         'Ver Jornadas',
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
       ),
     );
   }
@@ -5632,11 +5632,48 @@ class _LeagueRoundCard extends StatelessWidget {
               ),
             )
           else
-            for (var index = 0; index < round.users.length; index++) ...[
-              _LeagueRoundUserItem(user: round.users[index]),
-              if (index != round.users.length - 1) const SizedBox(height: 8),
-            ],
+            _LeagueRoundUsersList(round: round),
         ],
+      ),
+    );
+  }
+}
+
+class _LeagueRoundUsersList extends StatelessWidget {
+  const _LeagueRoundUsersList({required this.round});
+
+  static const _estimatedUserRowHeight = 74.0;
+  static const _userRowSpacing = 8.0;
+
+  final _LeagueRound round;
+
+  double _heightFor(BuildContext context) {
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final maxListHeight = (viewportHeight * 0.42).clamp(220.0, 420.0);
+    final estimatedContentHeight =
+        (round.users.length * _estimatedUserRowHeight) +
+        (max(0, round.users.length - 1) * _userRowSpacing);
+
+    return min(maxListHeight, estimatedContentHeight);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _heightFor(context),
+      child: Scrollbar(
+        child: ListView.separated(
+          key: PageStorageKey<String>(
+            'league_round_users_${round.jornadaLabel}',
+          ),
+          primary: false,
+          padding: EdgeInsets.zero,
+          itemCount: round.users.length,
+          separatorBuilder: (_, _) => const SizedBox(height: _userRowSpacing),
+          itemBuilder: (context, index) {
+            return _LeagueRoundUserItem(user: round.users[index]);
+          },
+        ),
       ),
     );
   }
@@ -5740,7 +5777,7 @@ class _LeagueRoundUserItem extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  hasGame ? user.gameLabel : 'Sin partida',
+                  user.roundStatusLabel,
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -7701,12 +7738,14 @@ class _LeagueRoundUser {
   const _LeagueRoundUser({
     required this.idUsuario,
     required this.idPartida,
+    required this.jugador,
     required this.difGolpes,
     required this.hayPartida,
   });
 
   final String idUsuario;
   final String idPartida;
+  final String jugador;
   final int? difGolpes;
   final String hayPartida;
 
@@ -7730,20 +7769,23 @@ class _LeagueRoundUser {
   }
 
   String get userLabel {
+    final trimmedPlayer = jugador.trim();
+    if (trimmedPlayer.isNotEmpty) {
+      return trimmedPlayer;
+    }
+
     final trimmedUserId = idUsuario.trim();
     return trimmedUserId.isEmpty ? 'Usuario sin id' : 'Usuario $trimmedUserId';
   }
 
-  String get gameLabel {
-    final trimmedGameId = idPartida.trim();
-    return trimmedGameId.isEmpty ? 'Partida sin id' : 'Partida $trimmedGameId';
-  }
+  String get roundStatusLabel => hasGame ? 'Con partida' : 'Sin partida';
 
   String get difGolpesLabel => difGolpes == null ? '-' : '$difGolpes';
 
   static _LeagueRoundUser? fromMap(Map<String, dynamic> map) {
     final idUsuario = '${map['idUsuario'] ?? ''}'.trim();
     final idPartida = '${map['idPartida'] ?? ''}'.trim();
+    final jugador = '${map['jugador'] ?? ''}'.trim();
     final difGolpes = _intFromBackendValue(
       map['dif_golpes'] ?? map['difGolpes'],
     );
@@ -7752,6 +7794,7 @@ class _LeagueRoundUser {
 
     if (idUsuario.isEmpty &&
         idPartida.isEmpty &&
+        jugador.isEmpty &&
         difGolpes == null &&
         hayPartida.isEmpty) {
       return null;
@@ -7760,6 +7803,7 @@ class _LeagueRoundUser {
     return _LeagueRoundUser(
       idUsuario: idUsuario,
       idPartida: idPartida,
+      jugador: jugador,
       difGolpes: difGolpes,
       hayPartida: hayPartida,
     );
