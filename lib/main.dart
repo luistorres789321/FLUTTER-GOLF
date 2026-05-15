@@ -5531,7 +5531,8 @@ class _LeagueRoundPager extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
               child: Text(
-                'Jornada ${currentRoundIndex + 1} de $totalRounds',
+                '${currentRoundIndex + 1}',
+                key: const ValueKey('league_round_pager_label'),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 14,
@@ -5569,7 +5570,6 @@ class _LeagueRoundCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final usersWithGame = round.users.where((user) => user.hasGame).length;
-    final usersWithoutGame = round.users.length - usersWithGame;
     final bestScore = round.bestDifGolpesLabel;
 
     return Container(
@@ -5599,24 +5599,28 @@ class _LeagueRoundCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          Row(
             children: [
-              _LeagueRoundStatPill(
-                label: 'Jugadores',
-                value: '${round.users.length}',
+              Expanded(
+                child: _LeagueRoundStatPill(
+                  label: 'Jug.',
+                  value: '${round.users.length}',
+                ),
               ),
-              _LeagueRoundStatPill(
-                label: 'Con partida',
-                value: '$usersWithGame',
+              const SizedBox(width: 6),
+              Expanded(
+                child: _LeagueRoundStatPill(
+                  label: 'jugaron',
+                  value: '$usersWithGame',
+                ),
               ),
-              _LeagueRoundStatPill(
-                label: 'Sin partida',
-                value: '$usersWithoutGame',
+              const SizedBox(width: 6),
+              Expanded(
+                child: _LeagueRoundStatPill(
+                  label: 'Mejor HCP',
+                  value: bestScore.isEmpty ? '-' : bestScore,
+                ),
               ),
-              if (bestScore.isNotEmpty)
-                _LeagueRoundStatPill(label: 'Mejor dif.', value: bestScore),
             ],
           ),
           const SizedBox(height: 14),
@@ -5694,14 +5698,17 @@ class _LeagueRoundStatPill extends StatelessWidget {
         border: Border.all(color: const Color(0xFFD1DDC3)),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 16,
+                fontSize: 15,
                 fontWeight: FontWeight.w900,
                 color: Color(0xFF486536),
               ),
@@ -5709,8 +5716,11 @@ class _LeagueRoundStatPill extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.w800,
                 color: Color(0xFF6C737D),
               ),

@@ -315,15 +315,20 @@ void main() {
 
     expect(find.text('Jornadas'), findsOneWidget);
     expect(find.text('TORNEO VERANO'), findsOneWidget);
-    expect(find.text('Jornada 1 de 2'), findsOneWidget);
+    expect(_leagueRoundPagerLabel(tester), '1');
+    expect(find.text('Jornada 1 de 2'), findsNothing);
     expect(find.text('Jornada 1'), findsOneWidget);
     expect(find.text('Ana Garcia'), findsOneWidget);
     expect(find.text('Usuario 4'), findsNothing);
     expect(find.text('Partida PK1'), findsNothing);
     expect(find.text('Luis Torres'), findsOneWidget);
     expect(find.text('Usuario 11'), findsNothing);
-    expect(find.text('Con partida'), findsWidgets);
-    expect(find.text('Sin partida'), findsWidgets);
+    expect(find.text('Jug.'), findsOneWidget);
+    expect(find.text('jugaron'), findsOneWidget);
+    expect(find.text('Mejor HCP'), findsOneWidget);
+    expect(find.text('Mejor dif.'), findsNothing);
+    expect(find.text('Con partida'), findsOneWidget);
+    expect(find.text('Sin partida'), findsOneWidget);
 
     final roundsUri = requests.firstWhere(
       (uri) => uri.queryParameters['accion'] == 'obtener_jornadas',
@@ -336,7 +341,8 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Siguiente'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Jornada 2 de 2'), findsOneWidget);
+    expect(_leagueRoundPagerLabel(tester), '2');
+    expect(find.text('Jornada 2 de 2'), findsNothing);
     expect(find.text('Marta Ruiz'), findsOneWidget);
     expect(find.text('Usuario 8'), findsNothing);
     expect(find.text('Partida PK2'), findsNothing);
@@ -344,7 +350,7 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Anterior'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Jornada 1 de 2'), findsOneWidget);
+    expect(_leagueRoundPagerLabel(tester), '1');
   });
 
   testWidgets('shows league information dialog from league card', (
@@ -3273,6 +3279,12 @@ Future<void> _openCreateLeagueFromHome(WidgetTester tester) async {
   await tester.ensureVisible(find.text('Crea Liguilla'));
   await tester.tap(find.text('Crea Liguilla'));
   await tester.pumpAndSettle();
+}
+
+String? _leagueRoundPagerLabel(WidgetTester tester) {
+  return tester
+      .widget<Text>(find.byKey(const ValueKey('league_round_pager_label')))
+      .data;
 }
 
 String _twoDigits(int value) {
