@@ -294,11 +294,11 @@ void main() {
           requests: requests,
           leaguesResponse:
               "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
-              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','aplicar_handicap_partidas':'S'}]",
           leagueRoundsResponse:
-              '[{"jornada":1,"usuarios":[{"idUsuario":"4","idPartida":"PK1","jugador":"Ana Garcia","dif_golpes":98,"hay_partida":S},'
+              '[{"jornada":1,"usuarios":[{"idUsuario":"4","idPartida":"PK1","jugador":"Ana Garcia","dif_golpes":98,"hay_partida":S,"handicap_inicial":14.5,"handicap_final":13.5},'
               '{"idUsuario":"11","idPartida":"","jugador":"Luis Torres","dif_golpes":0,"hay_partida":N}]},'
-              '{"jornada":2,"usuarios":[{"idUsuario":"8","idPartida":"PK2","jugador":"Marta Ruiz","dif_golpes":113,"hay_partida":S}]}]',
+              '{"jornada":2,"usuarios":[{"idUsuario":"8","idPartida":"PK2","jugador":"Marta Ruiz","dif_golpes":113,"hay_partida":S,"handicap_inicial":20,"handicap_final":19}]}]',
         ),
       ),
     );
@@ -329,6 +329,11 @@ void main() {
     expect(find.text('Mejor dif.'), findsNothing);
     expect(find.text('Con partida'), findsOneWidget);
     expect(find.text('Sin partida'), findsOneWidget);
+    expect(find.text('Dif.'), findsOneWidget);
+    expect(find.text('HCP ini.'), findsOneWidget);
+    expect(find.text('HCP fin.'), findsOneWidget);
+    expect(find.text('14.5'), findsOneWidget);
+    expect(find.text('13.5'), findsOneWidget);
 
     final roundsUri = requests.firstWhere(
       (uri) => uri.queryParameters['accion'] == 'obtener_jornadas',
@@ -351,6 +356,41 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_leagueRoundPagerLabel(tester), '1');
+  });
+
+  testWidgets('hides round handicap values when league does not apply them', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','aplicar_handicap_partidas':'N'}]",
+          leagueRoundsResponse:
+              '[{"jornada":1,"usuarios":[{"idUsuario":"4","idPartida":"PK1","jugador":"Ana Garcia","dif_golpes":98,"hay_partida":S,"handicap_inicial":14.5,"handicap_final":13.5}]}]',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Ver Jornadas'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ana Garcia'), findsOneWidget);
+    expect(find.text('Dif.'), findsOneWidget);
+    expect(find.text('98'), findsWidgets);
+    expect(find.text('HCP ini.'), findsNothing);
+    expect(find.text('HCP fin.'), findsNothing);
+    expect(find.text('14.5'), findsNothing);
+    expect(find.text('13.5'), findsNothing);
   });
 
   testWidgets('shows league information dialog from league card', (
@@ -1634,6 +1674,9 @@ void main() {
     expect(find.text('Auto'), findsOneWidget);
     expect(find.text('Luis'), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(36));
+    expect(find.text('COMPETICION'), findsNothing);
+    expect(find.text('EQUIPO'), findsNothing);
+    expect(find.text('Signatures'), findsNothing);
     expect(find.text('Jugadores'), findsNothing);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Darme de baja'));

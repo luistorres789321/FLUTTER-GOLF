@@ -5423,6 +5423,8 @@ class _LeagueRoundsScreenState extends State<_LeagueRoundsScreen> {
   @override
   Widget build(BuildContext context) {
     final leagueTitle = widget.league.titulo.trim();
+    final appliesHandicapInMatches =
+        _leagueYesNoValue(widget.league.aplicarHandicapPartidas) == 'Si';
 
     return _ReservationScreenFrame(
       title: 'Jornadas',
@@ -5482,7 +5484,10 @@ class _LeagueRoundsScreenState extends State<_LeagueRoundsScreen> {
                 : _showNextRound,
           ),
           const SizedBox(height: 14),
-          _LeagueRoundCard(round: _rounds[_currentRoundIndex]),
+          _LeagueRoundCard(
+            round: _rounds[_currentRoundIndex],
+            appliesHandicapInMatches: appliesHandicapInMatches,
+          ),
         ],
       ],
     );
@@ -5563,9 +5568,13 @@ class _LeagueRoundPager extends StatelessWidget {
 }
 
 class _LeagueRoundCard extends StatelessWidget {
-  const _LeagueRoundCard({required this.round});
+  const _LeagueRoundCard({
+    required this.round,
+    required this.appliesHandicapInMatches,
+  });
 
   final _LeagueRound round;
+  final bool appliesHandicapInMatches;
 
   @override
   Widget build(BuildContext context) {
@@ -5636,7 +5645,10 @@ class _LeagueRoundCard extends StatelessWidget {
               ),
             )
           else
-            _LeagueRoundUsersList(round: round),
+            _LeagueRoundUsersList(
+              round: round,
+              appliesHandicapInMatches: appliesHandicapInMatches,
+            ),
         ],
       ),
     );
@@ -5644,18 +5656,26 @@ class _LeagueRoundCard extends StatelessWidget {
 }
 
 class _LeagueRoundUsersList extends StatelessWidget {
-  const _LeagueRoundUsersList({required this.round});
+  const _LeagueRoundUsersList({
+    required this.round,
+    required this.appliesHandicapInMatches,
+  });
 
-  static const _estimatedUserRowHeight = 74.0;
+  static const _estimatedCompactUserRowHeight = 74.0;
+  static const _estimatedHandicapUserRowHeight = 116.0;
   static const _userRowSpacing = 8.0;
 
   final _LeagueRound round;
+  final bool appliesHandicapInMatches;
 
   double _heightFor(BuildContext context) {
     final viewportHeight = MediaQuery.sizeOf(context).height;
     final maxListHeight = (viewportHeight * 0.42).clamp(220.0, 420.0);
+    final estimatedUserRowHeight = appliesHandicapInMatches
+        ? _estimatedHandicapUserRowHeight
+        : _estimatedCompactUserRowHeight;
     final estimatedContentHeight =
-        (round.users.length * _estimatedUserRowHeight) +
+        (round.users.length * estimatedUserRowHeight) +
         (max(0, round.users.length - 1) * _userRowSpacing);
 
     return min(maxListHeight, estimatedContentHeight);
@@ -5675,7 +5695,10 @@ class _LeagueRoundUsersList extends StatelessWidget {
           itemCount: round.users.length,
           separatorBuilder: (_, _) => const SizedBox(height: _userRowSpacing),
           itemBuilder: (context, index) {
-            return _LeagueRoundUserItem(user: round.users[index]);
+            return _LeagueRoundUserItem(
+              user: round.users[index],
+              appliesHandicapInMatches: appliesHandicapInMatches,
+            );
           },
         ),
       ),
@@ -5733,14 +5756,17 @@ class _LeagueRoundStatPill extends StatelessWidget {
 }
 
 class _LeagueRoundUserItem extends StatelessWidget {
-  const _LeagueRoundUserItem({required this.user});
+  const _LeagueRoundUserItem({
+    required this.user,
+    required this.appliesHandicapInMatches,
+  });
 
   final _LeagueRoundUser user;
+  final bool appliesHandicapInMatches;
 
   @override
   Widget build(BuildContext context) {
     final hasGame = user.hasGame;
-    final color = hasGame ? const Color(0xFF486536) : const Color(0xFF9D433D);
     final background = hasGame
         ? const Color(0xFFF8FBF3)
         : const Color(0xFFFFF4F2);
@@ -5754,67 +5780,119 @@ class _LeagueRoundUserItem extends StatelessWidget {
           color: hasGame ? const Color(0xFFD1DDC3) : const Color(0xFFE0A39E),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: hasGame
-                  ? const Color(0xFFE1ECD6)
-                  : const Color(0xFFFFDFDB),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              hasGame ? Icons.sports_golf : Icons.event_busy,
-              size: 20,
-              color: color,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: appliesHandicapInMatches
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  user.userLabel,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF545B66),
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  user.roundStatusLabel,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: hasGame
-                        ? const Color(0xFF6C737D)
-                        : const Color(0xFF9D433D),
-                  ),
+                _LeagueRoundUserIdentity(user: user),
+                const SizedBox(height: 10),
+                _LeagueRoundScoreBadge(
+                  user: user,
+                  showHandicapMetrics: true,
+                  expandMetrics: true,
                 ),
               ],
+            )
+          : Row(
+              children: [
+                Expanded(child: _LeagueRoundUserIdentity(user: user)),
+                const SizedBox(width: 10),
+                _LeagueRoundScoreBadge(user: user, showHandicapMetrics: false),
+              ],
             ),
-          ),
-          const SizedBox(width: 10),
-          _LeagueRoundScoreBadge(user: user),
-        ],
-      ),
     );
   }
 }
 
-class _LeagueRoundScoreBadge extends StatelessWidget {
-  const _LeagueRoundScoreBadge({required this.user});
+class _LeagueRoundUserIdentity extends StatelessWidget {
+  const _LeagueRoundUserIdentity({required this.user});
 
   final _LeagueRoundUser user;
 
   @override
   Widget build(BuildContext context) {
     final hasGame = user.hasGame;
+    final color = hasGame ? const Color(0xFF486536) : const Color(0xFF9D433D);
+
+    return Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: hasGame ? const Color(0xFFE1ECD6) : const Color(0xFFFFDFDB),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            hasGame ? Icons.sports_golf : Icons.event_busy,
+            size: 20,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                user.userLabel,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF545B66),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                user.roundStatusLabel,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: hasGame
+                      ? const Color(0xFF6C737D)
+                      : const Color(0xFF9D433D),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LeagueRoundScoreBadge extends StatelessWidget {
+  const _LeagueRoundScoreBadge({
+    required this.user,
+    required this.showHandicapMetrics,
+    this.expandMetrics = false,
+  });
+
+  final _LeagueRoundUser user;
+  final bool showHandicapMetrics;
+  final bool expandMetrics;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasGame = user.hasGame;
+    final scoreItems = hasGame
+        ? [
+            _LeagueRoundScoreItem(label: 'Dif.', value: user.difGolpesLabel),
+            if (showHandicapMetrics && user.handicapInicialLabel.isNotEmpty)
+              _LeagueRoundScoreItem(
+                label: 'HCP ini.',
+                value: user.handicapInicialLabel,
+              ),
+            if (showHandicapMetrics && user.handicapFinalLabel.isNotEmpty)
+              _LeagueRoundScoreItem(
+                label: 'HCP fin.',
+                value: user.handicapFinalLabel,
+              ),
+          ]
+        : const [_LeagueRoundScoreItem(label: 'Estado', value: 'N')];
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -5823,29 +5901,82 @@ class _LeagueRoundScoreBadge extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Row(
+          mainAxisSize: expandMetrics ? MainAxisSize.max : MainAxisSize.min,
           children: [
-            Text(
-              hasGame ? user.difGolpesLabel : 'N',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-                color: hasGame ? Colors.white : const Color(0xFF9D433D),
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              hasGame ? 'Dif.' : 'Estado',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                color: hasGame ? Colors.white70 : const Color(0xFF9D433D),
-              ),
-            ),
+            for (var index = 0; index < scoreItems.length; index++) ...[
+              if (expandMetrics)
+                Expanded(
+                  child: _LeagueRoundScoreMetric(
+                    item: scoreItems[index],
+                    hasGame: hasGame,
+                  ),
+                )
+              else
+                _LeagueRoundScoreMetric(
+                  item: scoreItems[index],
+                  hasGame: hasGame,
+                ),
+              if (index < scoreItems.length - 1)
+                Container(
+                  width: 1,
+                  height: 28,
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  color: Colors.white24,
+                ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _LeagueRoundScoreItem {
+  const _LeagueRoundScoreItem({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
+class _LeagueRoundScoreMetric extends StatelessWidget {
+  const _LeagueRoundScoreMetric({required this.item, required this.hasGame});
+
+  final _LeagueRoundScoreItem item;
+  final bool hasGame;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = hasGame ? Colors.white : const Color(0xFF9D433D);
+    final labelColor = hasGame ? Colors.white70 : const Color(0xFF9D433D);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          item.value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+            color: textColor,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          item.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            color: labelColor,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -7751,6 +7882,8 @@ class _LeagueRoundUser {
     required this.jugador,
     required this.difGolpes,
     required this.hayPartida,
+    required this.handicapInicial,
+    required this.handicapFinal,
   });
 
   final String idUsuario;
@@ -7758,6 +7891,8 @@ class _LeagueRoundUser {
   final String jugador;
   final int? difGolpes;
   final String hayPartida;
+  final String handicapInicial;
+  final String handicapFinal;
 
   bool get hasGame {
     final normalizedValue = hayPartida.trim().toUpperCase();
@@ -7792,6 +7927,10 @@ class _LeagueRoundUser {
 
   String get difGolpesLabel => difGolpes == null ? '-' : '$difGolpes';
 
+  String get handicapInicialLabel => _leaguePlainNumberValue(handicapInicial);
+
+  String get handicapFinalLabel => _leaguePlainNumberValue(handicapFinal);
+
   static _LeagueRoundUser? fromMap(Map<String, dynamic> map) {
     final idUsuario = '${map['idUsuario'] ?? ''}'.trim();
     final idPartida = '${map['idPartida'] ?? ''}'.trim();
@@ -7801,12 +7940,18 @@ class _LeagueRoundUser {
     );
     final hayPartida = '${map['hay_partida'] ?? map['hayPartida'] ?? ''}'
         .trim();
+    final handicapInicial =
+        '${map['handicap_inicial'] ?? map['handicapInicial'] ?? ''}'.trim();
+    final handicapFinal =
+        '${map['handicap_final'] ?? map['handicapFinal'] ?? ''}'.trim();
 
     if (idUsuario.isEmpty &&
         idPartida.isEmpty &&
         jugador.isEmpty &&
         difGolpes == null &&
-        hayPartida.isEmpty) {
+        hayPartida.isEmpty &&
+        handicapInicial.isEmpty &&
+        handicapFinal.isEmpty) {
       return null;
     }
 
@@ -7816,6 +7961,8 @@ class _LeagueRoundUser {
       jugador: jugador,
       difGolpes: difGolpes,
       hayPartida: hayPartida,
+      handicapInicial: handicapInicial,
+      handicapFinal: handicapFinal,
     );
   }
 }
