@@ -294,6 +294,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   static const _savedFieldIdKey = 'saved_field_id';
   static const _savedPlayersKey = 'saved_players';
   static const _savedGameRowsKey = 'saved_game_rows_json';
+  static const _savedGameLeagueTitleKey = 'saved_game_league_title';
+  static const _savedGameLeagueRoundKey = 'saved_game_league_round';
   static const _invitationGameIdKey = 'invitation_game_id';
   static const _invitationGameCreatedAtKey = 'invitation_game_created_at';
   static const _defaultFieldId = '1';
@@ -772,6 +774,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
           generateIdPartida: _generateGameId,
           onInvitationGameCreated: _storeInvitationGameId,
           onInvitationAccepted: _saveAcceptedInvitationGameId,
+          loadSavedLeagueInfo: _loadSavedLeagueInfoForGame,
         ),
       ),
     );
@@ -789,6 +792,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     await prefs.setString(_savedFieldIdKey, session.idCampo);
     await prefs.setString(_savedPlayersKey, session.jugadores);
     await prefs.setString(_savedGameRowsKey, session.playRowsJson);
+    await _persistSessionLeagueInfo(prefs, session);
 
     if (!mounted) {
       return;
@@ -814,6 +818,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     await prefs.setString(_savedGameIdKey, acceptedIdPartida);
     await prefs.remove(_savedPlayersKey);
     await prefs.remove(_savedGameRowsKey);
+    await prefs.remove(_savedGameLeagueTitleKey);
+    await prefs.remove(_savedGameLeagueRoundKey);
     await prefs.setString(_invitationGameIdKey, acceptedIdPartida);
     await prefs.setInt(
       _invitationGameCreatedAtKey,
@@ -925,6 +931,44 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     return _isUserRegistered && idUsuario.isNotEmpty;
   }
 
+  Future<void> _changeActiveSessionLeagueRound(String leagueRound) async {
+    final session = _activeSession;
+    final trimmedRound = leagueRound.trim();
+    if (session == null || trimmedRound.isEmpty) {
+      return;
+    }
+
+    final response = await _datosServidorService.actualizaJornadaPartida(
+      idPartida: session.idPartida,
+      jornada: trimmedRound,
+    );
+    debugPrint(
+      'actualizaJornadaPartida(${session.idPartida}, $trimmedRound): '
+      '$response',
+    );
+    if (!_backendResponseIsOk(response)) {
+      throw FormatException('Respuesta no valida: $response');
+    }
+
+    if (!mounted || !_isCurrentSession(session)) {
+      return;
+    }
+
+    final refreshedSession = _GameSession(
+      idPartida: session.idPartida,
+      idCampo: session.idCampo,
+      jugadores: session.jugadores,
+      playRowsJson: session.playRowsJson,
+      leagueTitle: session.leagueTitle,
+      leagueRound: trimmedRound,
+      leagueRoundOptions: _leagueRoundOptionsAfterSelection(
+        session.leagueRoundOptions,
+        trimmedRound,
+      ),
+    );
+    await _saveSessionLocallyIfCurrent(session, refreshedSession);
+  }
+
   Future<void> _savePlayRowsJson(String playRowsJson) async {
     final session = _activeSession;
     if (session == null) {
@@ -968,6 +1012,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     await prefs.setString(_savedFieldIdKey, session.idCampo);
     await prefs.setString(_savedPlayersKey, session.jugadores);
     await prefs.setString(_savedGameRowsKey, playRowsJson);
+    await _persistSessionLeagueInfo(prefs, session);
 
     if (!mounted || !_isCurrentSession(session)) {
       return;
@@ -981,6 +1026,9 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         idCampo: session.idCampo,
         jugadores: session.jugadores,
         playRowsJson: playRowsJson,
+        leagueTitle: session.leagueTitle,
+        leagueRound: session.leagueRound,
+        leagueRoundOptions: session.leagueRoundOptions,
       );
     });
   }
@@ -1131,6 +1179,9 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
       idPartida: session.idPartida,
       idCampo: session.idCampo,
       jugadores: players.length.toString(),
+      leagueTitle: session.leagueTitle,
+      leagueRound: session.leagueRound,
+      leagueRoundOptions: session.leagueRoundOptions,
       playRowsJson: _createPlayRowsJsonForPlayers(
         players,
         existingRows: existingRows,
@@ -1196,6 +1247,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     await prefs.setString(_savedFieldIdKey, requestedSession.idCampo);
     await prefs.remove(_savedPlayersKey);
     await prefs.remove(_savedGameRowsKey);
+    await prefs.remove(_savedGameLeagueTitleKey);
+    await prefs.remove(_savedGameLeagueRoundKey);
     await prefs.setString(_invitationGameIdKey, newIdPartida);
     await prefs.setInt(
       _invitationGameCreatedAtKey,
@@ -1252,6 +1305,8 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     await prefs.remove(_savedGameIdKey);
     await prefs.remove(_savedPlayersKey);
     await prefs.remove(_savedGameRowsKey);
+    await prefs.remove(_savedGameLeagueTitleKey);
+    await prefs.remove(_savedGameLeagueRoundKey);
     await _clearInvitationGameId(prefs);
 
     if (!mounted || !_isCurrentSession(requestedSession)) {
@@ -1289,6 +1344,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     await prefs.setString(_savedFieldIdKey, refreshedSession.idCampo);
     await prefs.setString(_savedPlayersKey, refreshedSession.jugadores);
     await prefs.setString(_savedGameRowsKey, refreshedSession.playRowsJson);
+    await _persistSessionLeagueInfo(prefs, refreshedSession);
 
     if (!mounted || !_isCurrentSession(requestedSession)) {
       return;
@@ -1318,6 +1374,40 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         activeSession.idPartida == session.idPartida;
   }
 
+  Future<void> _persistSessionLeagueInfo(
+    SharedPreferences prefs,
+    _GameSession session,
+  ) async {
+    final title = session.leagueTitle.trim();
+    final round = session.leagueRound.trim();
+    if (title.isEmpty && round.isEmpty) {
+      await prefs.remove(_savedGameLeagueTitleKey);
+      await prefs.remove(_savedGameLeagueRoundKey);
+      return;
+    }
+
+    await prefs.setString(_savedGameLeagueTitleKey, title);
+    await prefs.setString(_savedGameLeagueRoundKey, round);
+  }
+
+  Future<_GameLeagueInfo?> _loadSavedLeagueInfoForGame(String idPartida) async {
+    final requestedGameId = idPartida.trim();
+    if (requestedGameId.isEmpty) {
+      return null;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedGameId = prefs.getString(_savedGameIdKey)?.trim() ?? '';
+    if (savedGameId != requestedGameId) {
+      return null;
+    }
+
+    return _gameLeagueInfoFromValues(
+      prefs.getString(_savedGameLeagueTitleKey),
+      prefs.getString(_savedGameLeagueRoundKey),
+    );
+  }
+
   void _exitActiveSession() {
     if (_activeSession == null) {
       return;
@@ -1344,6 +1434,10 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         initialPlayRowsJson: session.playRowsJson,
         differentRemotePlayRowsJson: _differentRemotePlayRowsJson,
         datosServidorService: _datosServidorService,
+        leagueTitle: session.leagueTitle,
+        leagueRound: session.leagueRound,
+        leagueRoundOptions: session.leagueRoundOptions,
+        onLeagueRoundChanged: _changeActiveSessionLeagueRound,
         onPlayRowsJsonChanged: _savePlayRowsJson,
         onLeaveGame: _leaveCurrentUserGame,
         onDestroyGame: _destroyCurrentGame,
@@ -1943,6 +2037,8 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
               : round.idPartida,
           jugadores: round.jugadores,
           initialPlayRowsJson: round.playRowsJson,
+          leagueTitle: round.leagueTitle,
+          leagueRound: round.leagueRound,
           datosServidorService: widget.datosServidorService,
           onExit: () => Navigator.of(context).pop(),
           onLeaveGame: () async {},
@@ -2680,6 +2776,7 @@ class _InvitePlayersScreen extends StatefulWidget {
     required this.generateIdPartida,
     required this.onInvitationGameCreated,
     required this.onInvitationAccepted,
+    required this.loadSavedLeagueInfo,
   });
 
   final DatosServidorService datosServidorService;
@@ -2689,6 +2786,7 @@ class _InvitePlayersScreen extends StatefulWidget {
   final String Function() generateIdPartida;
   final Future<void> Function(String idPartida) onInvitationGameCreated;
   final Future<void> Function(String idPartida) onInvitationAccepted;
+  final Future<_GameLeagueInfo?> Function(String idPartida) loadSavedLeagueInfo;
 
   @override
   State<_InvitePlayersScreen> createState() => _InvitePlayersScreenState();
@@ -2759,7 +2857,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       }
 
       if (playersResponse.hasStarted) {
-        _openScorecardForPlayers(idPartida: idPartida, players: players);
+        await _openScorecardForPlayers(idPartida: idPartida, players: players);
         return;
       }
 
@@ -2854,7 +2952,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       }
 
       if (playersResponse.hasStarted) {
-        _openScorecardForPlayers(idPartida: idPartida, players: players);
+        await _openScorecardForPlayers(idPartida: idPartida, players: players);
         return;
       }
 
@@ -2959,10 +3057,19 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     return true;
   }
 
-  void _openScorecardForPlayers({
+  Future<void> _openScorecardForPlayers({
     required String idPartida,
     required List<_InvitedPlayer> players,
-  }) {
+    _GameLeagueInfo? leagueInfo,
+  }) async {
+    final resolvedLeagueInfo =
+        leagueInfo ??
+        await _leagueInfoForAssociatedGame(idPartida) ??
+        await widget.loadSavedLeagueInfo(idPartida);
+    if (!mounted) {
+      return;
+    }
+
     _stopPlayersRefreshPolling();
     Navigator.of(context).pop(
       _GameSession(
@@ -2970,8 +3077,59 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         idCampo: widget.fieldId,
         jugadores: players.length.toString(),
         playRowsJson: _createPlayRowsJsonForPlayers(players),
+        leagueTitle: resolvedLeagueInfo?.title ?? '',
+        leagueRound: resolvedLeagueInfo?.round ?? '',
+        leagueRoundOptions: resolvedLeagueInfo?.roundOptions ?? const [],
       ),
     );
+  }
+
+  Future<_GameLeagueInfo?> _leagueInfoForAssociatedGame(
+    String idPartida,
+  ) async {
+    final trimmedGameId = idPartida.trim();
+    if (trimmedGameId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final leaguesResponse = await widget.datosServidorService
+          .obtenerLiguillas(widget.idUsuario);
+      final leagues = _leaguesFromResponse(leaguesResponse).where(
+        (league) =>
+            league.acabada.trim().isEmpty && league.fechaRechazo.trim().isEmpty,
+      );
+
+      for (final league in leagues) {
+        final roundsResponse = await widget.datosServidorService
+            .obtenerJornadas(league.idLiguilla);
+        final rounds = _leagueRoundsFromResponse(roundsResponse);
+        for (final round in rounds) {
+          final jornada = round.jornada;
+          if (jornada == null) {
+            continue;
+          }
+
+          final hasGame = round.users.any(
+            (user) => user.idPartida.trim() == trimmedGameId,
+          );
+          if (hasGame) {
+            return _GameLeagueInfo(
+              title: league.titulo,
+              round: '$jornada',
+              roundOptions: _leagueRoundOptionsForRounds(
+                rounds,
+                selectedRound: jornada,
+              ),
+            );
+          }
+        }
+      }
+    } catch (error) {
+      debugPrint('buscar liguilla asociada a $idPartida fallo: $error');
+    }
+
+    return null;
   }
 
   Future<void> _confirmAndRemovePlayer(_InvitedPlayer player) async {
@@ -3112,7 +3270,32 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
       _error = null;
     });
 
+    _GameLeagueInfo? leagueInfo;
     try {
+      final leagueChoice = await _selectLeagueForStartIfNeeded();
+      if (!mounted) {
+        return;
+      }
+
+      if (leagueChoice == null) {
+        _startPlayersRefreshPolling();
+        return;
+      }
+
+      debugPrint(
+        'asociar partida: '
+        '${leagueChoice.league?.idLiguilla ?? 'sin liguilla'}',
+      );
+      if (leagueChoice.league != null) {
+        leagueInfo = await _associateGameWithLeague(
+          league: leagueChoice.league!,
+          idPartida: idPartida,
+        );
+        if (!mounted) {
+          return;
+        }
+      }
+
       final response = await widget.datosServidorService.empezarPartida(
         idPartida,
       );
@@ -3125,10 +3308,17 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         return;
       }
 
-      _openScorecardForPlayers(idPartida: idPartida, players: _players);
+      await _openScorecardForPlayers(
+        idPartida: idPartida,
+        players: _players,
+        leagueInfo: leagueInfo,
+      );
     } catch (error) {
       debugPrint('empezarPartida fallo: $error');
-      if (await _openScorecardIfGameStarted(idPartida)) {
+      if (await _openScorecardIfGameStarted(
+        idPartida,
+        leagueInfo: leagueInfo,
+      )) {
         return;
       }
 
@@ -3149,7 +3339,108 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     }
   }
 
-  Future<bool> _openScorecardIfGameStarted(String idPartida) async {
+  Future<_StartGameLeagueChoice?> _selectLeagueForStartIfNeeded() async {
+    final response = await widget.datosServidorService.obtenerLiguillas(
+      widget.idUsuario,
+    );
+    final activeLeagues = _leaguesFromResponse(response)
+        .where(
+          (league) =>
+              league.acabada.trim().isEmpty &&
+              league.fechaRechazo.trim().isEmpty,
+        )
+        .toList();
+
+    if (activeLeagues.isEmpty) {
+      return const _StartGameLeagueChoice.withoutLeague();
+    }
+
+    if (!mounted) {
+      return null;
+    }
+
+    return showDialog<_StartGameLeagueChoice>(
+      context: context,
+      builder: (context) {
+        return _StartGameLeagueDialog(leagues: activeLeagues);
+      },
+    );
+  }
+
+  Future<_GameLeagueInfo> _associateGameWithLeague({
+    required _LeagueSummary league,
+    required String idPartida,
+  }) async {
+    final roundDetails = await _leagueRoundDetailsForNewGame(league.idLiguilla);
+    final jornada = roundDetails.round;
+    final response = await widget.datosServidorService.asociaPartidaALiguilla(
+      idLiguilla: league.idLiguilla,
+      idPartida: idPartida,
+      jornada: '$jornada',
+    );
+    debugPrint(
+      'asociaPartidaALiguilla(${league.idLiguilla}, $idPartida, $jornada): '
+      '$response',
+    );
+    if (!_backendResponseIsOk(response)) {
+      throw FormatException('Respuesta no valida: $response');
+    }
+
+    return _GameLeagueInfo(
+      title: league.titulo,
+      round: '$jornada',
+      roundOptions: roundDetails.roundOptions,
+    );
+  }
+
+  Future<_LeagueRoundDetails> _leagueRoundDetailsForNewGame(
+    String idLiguilla,
+  ) async {
+    final response = await widget.datosServidorService.obtenerJornadas(
+      idLiguilla,
+    );
+    final rounds = _leagueRoundsFromResponse(response);
+    final gameRounds = [
+      for (final round in rounds)
+        if (round.hasAssociatedGame && round.jornada != null) round,
+    ];
+    if (gameRounds.isEmpty) {
+      return _LeagueRoundDetails(
+        round: 1,
+        roundOptions: _leagueRoundOptionsForRounds(rounds, selectedRound: 1),
+      );
+    }
+
+    final maxRound = gameRounds.map((round) => round.jornada!).reduce(max);
+    final latestGameDate = _latestLeagueRoundGameDate(gameRounds);
+    if (latestGameDate == null) {
+      return _LeagueRoundDetails(
+        round: maxRound,
+        roundOptions: _leagueRoundOptionsForRounds(
+          rounds,
+          selectedRound: maxRound,
+        ),
+      );
+    }
+
+    final currentWeekStart = _weekStart(DateTime.now());
+    final latestGameWeekStart = _weekStart(latestGameDate);
+    final newRound = latestGameWeekStart.isBefore(currentWeekStart)
+        ? maxRound + 1
+        : maxRound;
+    return _LeagueRoundDetails(
+      round: newRound,
+      roundOptions: _leagueRoundOptionsForRounds(
+        rounds,
+        selectedRound: newRound,
+      ),
+    );
+  }
+
+  Future<bool> _openScorecardIfGameStarted(
+    String idPartida, {
+    _GameLeagueInfo? leagueInfo,
+  }) async {
     try {
       final playersResponse = await _fetchPlayersResponse(idPartida);
       if (!mounted) {
@@ -3169,9 +3460,10 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         return false;
       }
 
-      _openScorecardForPlayers(
+      await _openScorecardForPlayers(
         idPartida: idPartida,
         players: playersResponse.players,
+        leagueInfo: leagueInfo,
       );
       return true;
     } catch (error) {
@@ -3310,6 +3602,89 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         style: const TextStyle(fontSize: 12, color: Color(0xFF545B66)),
       ),
     ];
+  }
+}
+
+class _StartGameLeagueChoice {
+  const _StartGameLeagueChoice.withoutLeague() : league = null;
+  const _StartGameLeagueChoice.withLeague(this.league);
+
+  final _LeagueSummary? league;
+}
+
+class _StartGameLeagueDialog extends StatelessWidget {
+  const _StartGameLeagueDialog({required this.leagues});
+
+  final List<_LeagueSummary> leagues;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(24, 18, 16, 8),
+      contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+      title: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Asociar partida a:',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Volver'),
+          ),
+        ],
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            OutlinedButton(
+              onPressed: () => Navigator.of(
+                context,
+              ).pop(const _StartGameLeagueChoice.withoutLeague()),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF567B37),
+                side: const BorderSide(color: Color(0xFF567B37)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('Partida sin liguilla'),
+            ),
+            for (final league in leagues) ...[
+              const SizedBox(height: 10),
+              FilledButton(
+                onPressed: () => Navigator.of(
+                  context,
+                ).pop(_StartGameLeagueChoice.withLeague(league)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF567B37),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.emoji_events, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        league.titulo.trim().isEmpty
+                            ? 'Liguilla sin titulo'
+                            : league.titulo.trim(),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -4944,6 +5319,16 @@ String _leagueYesNoValue(String value) {
   }
 
   return 'Sin dato';
+}
+
+String _leagueRejectionValueFromMap(Map<String, dynamic> map) {
+  final rejectionDate = '${map['fecha_rechazo'] ?? ''}'.trim();
+  if (rejectionDate.isNotEmpty) {
+    return rejectionDate;
+  }
+
+  final rejectionFlag = '${map['rechazada'] ?? ''}'.trim();
+  return rejectionFlag.toUpperCase() == 'S' ? rejectionFlag : '';
 }
 
 class _LeagueStatusPill extends StatelessWidget {
@@ -7750,7 +8135,7 @@ class _LeagueSummary {
       movil: '${map['movil'] ?? ''}'.trim(),
       pendienteDecidir: '${map['pendiente_decidir'] ?? ''}'.trim(),
       acabada: '${map['acabada'] ?? ''}'.trim(),
-      fechaRechazo: '${map['fecha_rechazo'] ?? map['rechazada'] ?? ''}'.trim(),
+      fechaRechazo: _leagueRejectionValueFromMap(map),
       puedenInvitar: '${map['pueden_invitar'] ?? ''}'.trim(),
       creador: '${map['creador'] ?? ''}'.trim(),
       invitadoPor: '${map['invitado_por'] ?? map['invitador_por'] ?? ''}'
@@ -7836,12 +8221,32 @@ List<_LeagueParticipant> _leagueParticipantsFromResponse(String response) {
 }
 
 class _LeagueRound {
-  const _LeagueRound({required this.jornada, required this.users});
+  const _LeagueRound({
+    required this.jornada,
+    required this.users,
+    required this.fechaPartida,
+  });
 
   final int? jornada;
   final List<_LeagueRoundUser> users;
+  final String fechaPartida;
 
   String get jornadaLabel => jornada == null ? '-' : '$jornada';
+
+  bool get hasAssociatedGame => users.any((user) => user.hasGame);
+
+  Iterable<String> get associatedGameDateValues sync* {
+    final roundDate = fechaPartida.trim();
+    if (roundDate.isNotEmpty) {
+      yield roundDate;
+    }
+
+    for (final user in users) {
+      if (user.hasGame && user.fechaPartida.trim().isNotEmpty) {
+        yield user.fechaPartida;
+      }
+    }
+  }
 
   String get bestDifGolpesLabel {
     final scores = [
@@ -7871,7 +8276,11 @@ class _LeagueRound {
       return null;
     }
 
-    return _LeagueRound(jornada: jornada, users: users);
+    return _LeagueRound(
+      jornada: jornada,
+      users: users,
+      fechaPartida: _leagueRoundDateValueFromMap(map),
+    );
   }
 }
 
@@ -7884,6 +8293,7 @@ class _LeagueRoundUser {
     required this.hayPartida,
     required this.handicapInicial,
     required this.handicapFinal,
+    required this.fechaPartida,
   });
 
   final String idUsuario;
@@ -7893,6 +8303,7 @@ class _LeagueRoundUser {
   final String hayPartida;
   final String handicapInicial;
   final String handicapFinal;
+  final String fechaPartida;
 
   bool get hasGame {
     final normalizedValue = hayPartida.trim().toUpperCase();
@@ -7944,6 +8355,7 @@ class _LeagueRoundUser {
         '${map['handicap_inicial'] ?? map['handicapInicial'] ?? ''}'.trim();
     final handicapFinal =
         '${map['handicap_final'] ?? map['handicapFinal'] ?? ''}'.trim();
+    final fechaPartida = _leagueRoundDateValueFromMap(map);
 
     if (idUsuario.isEmpty &&
         idPartida.isEmpty &&
@@ -7951,7 +8363,8 @@ class _LeagueRoundUser {
         difGolpes == null &&
         hayPartida.isEmpty &&
         handicapInicial.isEmpty &&
-        handicapFinal.isEmpty) {
+        handicapFinal.isEmpty &&
+        fechaPartida.isEmpty) {
       return null;
     }
 
@@ -7963,8 +8376,52 @@ class _LeagueRoundUser {
       hayPartida: hayPartida,
       handicapInicial: handicapInicial,
       handicapFinal: handicapFinal,
+      fechaPartida: fechaPartida,
     );
   }
+}
+
+String _leagueRoundDateValueFromMap(Map<String, dynamic> map) {
+  for (final key in const [
+    'fecha_partida',
+    'fechaPartida',
+    'fecha_ultima_partida',
+    'fechaUltimaPartida',
+    'ultima_partida',
+    'ultimaPartida',
+    'dia_partida',
+    'diaPartida',
+    'dia',
+    'fecha',
+    'empezada',
+    'modificado',
+    'ultima_modificacion',
+  ]) {
+    final value = '${map[key] ?? ''}'.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+DateTime? _latestLeagueRoundGameDate(List<_LeagueRound> rounds) {
+  DateTime? latest;
+  for (final round in rounds) {
+    for (final rawDate in round.associatedGameDateValues) {
+      final date = _parseBackendDate(rawDate);
+      if (date == null) {
+        continue;
+      }
+
+      if (latest == null || date.isAfter(latest)) {
+        latest = date;
+      }
+    }
+  }
+
+  return latest;
 }
 
 List<_LeagueRound> _leagueRoundsFromResponse(String response) {
@@ -7976,6 +8433,41 @@ List<_LeagueRound> _leagueRoundsFromResponse(String response) {
     return leftRound.compareTo(rightRound);
   });
   return rounds;
+}
+
+List<int> _leagueRoundOptionsForRounds(
+  List<_LeagueRound> rounds, {
+  required int selectedRound,
+}) {
+  final existingRounds = [
+    for (final round in rounds)
+      if (round.jornada != null && round.jornada! > 0) round.jornada!,
+  ];
+  final latestRound = existingRounds.isEmpty ? 0 : existingRounds.reduce(max);
+  final lastOption = max(max(latestRound + 1, selectedRound), 1);
+  return [for (var round = 1; round <= lastOption; round++) round];
+}
+
+List<int> _leagueRoundOptionsFromCurrentRound(String currentRound) {
+  final parsedRound = int.tryParse(currentRound.trim());
+  if (parsedRound == null || parsedRound <= 0) {
+    return const [];
+  }
+
+  return [for (var round = 1; round <= parsedRound + 1; round++) round];
+}
+
+List<int> _leagueRoundOptionsAfterSelection(
+  List<int> options,
+  String selectedRound,
+) {
+  final selected = int.tryParse(selectedRound.trim());
+  final values = <int>{
+    for (final option in options)
+      if (option > 0) option,
+    if (selected != null && selected > 0) ...[selected, selected + 1],
+  }.toList()..sort();
+  return values;
 }
 
 List<Map<String, dynamic>>? _decodeLeagueRoundRows(Object? payload, int depth) {
@@ -8177,6 +8669,11 @@ const _spanishMonthNames = [
 
 DateTime _dateOnly(DateTime value) {
   return DateTime(value.year, value.month, value.day);
+}
+
+DateTime _weekStart(DateTime value) {
+  final date = _dateOnly(value);
+  return date.subtract(Duration(days: date.weekday - DateTime.monday));
 }
 
 bool _isSameDay(DateTime left, DateTime right) {
@@ -8928,6 +9425,8 @@ class _StatisticsRound {
     required this.handicapValues,
     required this.jugadores,
     required this.playRowsJson,
+    required this.leagueTitle,
+    required this.leagueRound,
   });
 
   final String idPartida;
@@ -8937,6 +9436,8 @@ class _StatisticsRound {
   final List<String> handicapValues;
   final String jugadores;
   final String playRowsJson;
+  final String leagueTitle;
+  final String leagueRound;
 
   static _StatisticsRound? fromPayload(
     Object? payload, {
@@ -8981,8 +9482,57 @@ class _StatisticsRound {
       handicapValues: _statisticsHandicapValuesFromPayload(payload),
       jugadores: rows.length.toString(),
       playRowsJson: jsonEncode(rows),
+      leagueTitle: _statisticsLeagueTitleValue(payload),
+      leagueRound: _statisticsLeagueRoundValue(payload),
     );
   }
+}
+
+String _statisticsLeagueTitleValue(Object? payload) {
+  if (payload is String) {
+    final decoded = _decodeJsonLikePayload(payload.trim());
+    return decoded == null ? '' : _statisticsLeagueTitleValue(decoded);
+  }
+
+  if (payload is! Map) {
+    return '';
+  }
+
+  final map = _stringKeyedMap(payload);
+  for (final key in const [
+    'titulo_liguilla',
+    'tituloLiguilla',
+    'liguilla',
+    'titulo',
+  ]) {
+    final value = '${map[key] ?? ''}'.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+String _statisticsLeagueRoundValue(Object? payload) {
+  if (payload is String) {
+    final decoded = _decodeJsonLikePayload(payload.trim());
+    return decoded == null ? '' : _statisticsLeagueRoundValue(decoded);
+  }
+
+  if (payload is! Map) {
+    return '';
+  }
+
+  final map = _stringKeyedMap(payload);
+  for (final key in const ['jornada_liguilla', 'jornadaLiguilla', 'jornada']) {
+    final value = '${map[key] ?? ''}'.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+
+  return '';
 }
 
 List<Map<String, dynamic>> _statisticsPlayRowsFromPayload(Object? payload) {
@@ -9521,12 +10071,51 @@ class _GameSession {
     required this.idCampo,
     required this.jugadores,
     required this.playRowsJson,
+    this.leagueTitle = '',
+    this.leagueRound = '',
+    this.leagueRoundOptions = const [],
   });
 
   final String idPartida;
   final String idCampo;
   final String jugadores;
   final String playRowsJson;
+  final String leagueTitle;
+  final String leagueRound;
+  final List<int> leagueRoundOptions;
+}
+
+class _GameLeagueInfo {
+  const _GameLeagueInfo({
+    required this.title,
+    required this.round,
+    this.roundOptions = const [],
+  });
+
+  final String title;
+  final String round;
+  final List<int> roundOptions;
+}
+
+_GameLeagueInfo? _gameLeagueInfoFromValues(String? title, String? round) {
+  final trimmedTitle = title?.trim() ?? '';
+  final trimmedRound = round?.trim() ?? '';
+  if (trimmedTitle.isEmpty && trimmedRound.isEmpty) {
+    return null;
+  }
+
+  return _GameLeagueInfo(
+    title: trimmedTitle,
+    round: trimmedRound,
+    roundOptions: _leagueRoundOptionsFromCurrentRound(trimmedRound),
+  );
+}
+
+class _LeagueRoundDetails {
+  const _LeagueRoundDetails({required this.round, required this.roundOptions});
+
+  final int round;
+  final List<int> roundOptions;
 }
 
 class _InvitedPlayer {

@@ -1717,6 +1717,367 @@ void main() {
     expect(find.text('Cancelar accion'), findsNothing);
   });
 
+  testWidgets('asks for league association before starting an active league game', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'PRU HANDICAP','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''},"
+              "{'idLiguilla':8,'titulo':'FINALIZADA','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'260518101500','fecha_rechazo':''},"
+              "{'idLiguilla':9,'titulo':'RECHAZADA','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'260518101500'},"
+              "{'idLiguilla':10,'titulo':'SOLO RECHAZADA N','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','rechazada':'N'},"
+              "{'idLiguilla':11,'titulo':'SOLO RECHAZADA S','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','rechazada':'S'}]",
+          playersResponseForGame: (_) {
+            return "[{'idJugador':'123','allias':'Auto','es_creador':'S'},"
+                "{'idJugador':'999','allias':'Luis','es_creador':'N'}]";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Asociar partida a:'), findsOneWidget);
+    expect(find.text('Partida sin liguilla'), findsOneWidget);
+    expect(find.text('PRU HANDICAP'), findsOneWidget);
+    expect(find.text('FINALIZADA'), findsNothing);
+    expect(find.text('RECHAZADA'), findsNothing);
+    expect(find.text('SOLO RECHAZADA N'), findsOneWidget);
+    expect(find.text('SOLO RECHAZADA S'), findsNothing);
+    expect(
+      requests.where(
+        (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+      ),
+      isEmpty,
+    );
+
+    await tester.tap(find.widgetWithText(TextButton, 'Volver'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Asociar partida a:'), findsNothing);
+    expect(find.text('Jugadores'), findsOneWidget);
+    expect(
+      requests.where(
+        (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+      ),
+      isEmpty,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Partida sin liguilla'),
+    );
+    await tester.pumpAndSettle();
+
+    final startUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+    );
+    expect(startUri.queryParameters['idPartida'], idPartida);
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+  });
+
+  testWidgets('associates selected league before starting the game', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    final previousWeek = _testBackendDate(
+      DateTime.now().subtract(const Duration(days: 7)),
+    );
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'PRU HANDICAP','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+          leagueRoundsResponse:
+              '[{"jornada":2,"usuarios":[{"idUsuario":"999","idPartida":"OLD1","jugador":"Luis",'
+              '"hay_partida":S,"fecha_partida":"$previousWeek"}]},'
+              '{"jornada":3,"usuarios":[{"idUsuario":"123","idPartida":"OLD2","jugador":"Auto",'
+              '"hay_partida":S,"fecha_partida":"$previousWeek"}]}]',
+          playersResponseForGame: (_) {
+            return "[{'idJugador':'123','allias':'Auto','es_creador':'S'},"
+                "{'idJugador':'999','allias':'Luis','es_creador':'N'}]";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    await tester.tap(find.widgetWithText(FilledButton, 'PRU HANDICAP'));
+    await tester.pumpAndSettle();
+
+    final roundsUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'obtener_jornadas',
+    );
+    expect(roundsUri.queryParameters['idLiguilla'], '7');
+
+    final associationUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'asocia_partida_a_liguilla',
+    );
+    expect(associationUri.queryParameters, {
+      'accion': 'asocia_partida_a_liguilla',
+      'idLiguilla': '7',
+      'idPartida': idPartida,
+      'jornada': '4',
+    });
+
+    final startUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+    );
+    expect(startUri.queryParameters['idPartida'], idPartida);
+    expect(
+      requests.indexOf(associationUri),
+      lessThan(requests.indexOf(startUri)),
+    );
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('PRU HANDICAP - jornada: 4'), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('saved_game_league_title'), 'PRU HANDICAP');
+    expect(prefs.getString('saved_game_league_round'), '4');
+  });
+
+  testWidgets('keeps selected league header when started game fallback opens', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          startGameResponse: '{"rpta":"ko"}',
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'PRU HANDICAP','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+          playersResponseForGame: (_) {
+            final hasStartRequest = requests.any(
+              (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+            );
+            final startedAt = hasStartRequest
+                ? _backendTimestampForToday()
+                : '';
+            return "{'empezada':'$startedAt','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    await tester.tap(find.widgetWithText(FilledButton, 'PRU HANDICAP'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('PRU HANDICAP - jornada: 1'), findsOneWidget);
+    expect(find.text('No se pudo empezar la partida.'), findsNothing);
+  });
+
+  testWidgets('shows league header for an already associated started game', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': idPartida,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          initialStateResponse:
+              "{'empezada':'${_backendTimestampForToday()}','ultima_modificacion':''}",
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'PRU HANDICAP','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+          leagueRoundsResponse:
+              '[{"jornada":2,"usuarios":[{"idUsuario":"123","idPartida":"$idPartida",'
+              '"jugador":"Auto","hay_partida":N}]}]',
+          playersResponseForGame: (_) {
+            return "{'empezada':'${_backendTimestampForToday()}','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar Partida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('PRU HANDICAP - jornada: 2'), findsOneWidget);
+    expect(
+      requests.any(
+        (uri) =>
+            uri.queryParameters['accion'] == 'obtener_jornadas' &&
+            uri.queryParameters['idLiguilla'] == '7',
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('changes scorecard league round from header menu', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': idPartida,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          initialStateResponse:
+              "{'empezada':'${_backendTimestampForToday()}','ultima_modificacion':''}",
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'PRU HANDICAP','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':''}]",
+          leagueRoundsResponse:
+              '[{"jornada":1,"usuarios":[{"idUsuario":"999","idPartida":"OLD1",'
+              '"jugador":"Luis","hay_partida":S}]},'
+              '{"jornada":2,"usuarios":[{"idUsuario":"123","idPartida":"$idPartida",'
+              '"jugador":"Auto","hay_partida":N}]}]',
+          playersResponseForGame: (_) {
+            return "{'empezada':'${_backendTimestampForToday()}','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar Partida'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PRU HANDICAP - jornada: 2'), findsOneWidget);
+
+    await tester.tap(find.text('PRU HANDICAP - jornada: 2'));
+    await tester.pumpAndSettle();
+    expect(find.text('jornada 1'), findsOneWidget);
+    expect(find.text('jornada 2'), findsOneWidget);
+    expect(find.text('jornada 3'), findsOneWidget);
+
+    await tester.tap(find.text('jornada 3'));
+    await tester.pumpAndSettle();
+
+    final updateUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'actualiza_jornada_partida',
+    );
+    expect(updateUri.queryParameters, {
+      'accion': 'actualiza_jornada_partida',
+      'idPartida': idPartida,
+      'jornada': '3',
+    });
+    expect(find.text('PRU HANDICAP - jornada: 3'), findsOneWidget);
+  });
+
+  testWidgets('uses saved league header when started game lookup has no rounds', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': idPartida,
+      'saved_game_league_title': 'PRU HANDICAP',
+      'saved_game_league_round': '2',
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          initialStateResponse:
+              "{'empezada':'${_backendTimestampForToday()}','ultima_modificacion':''}",
+          playersResponseForGame: (_) {
+            return "{'empezada':'${_backendTimestampForToday()}','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar Partida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('PRU HANDICAP - jornada: 2'), findsOneWidget);
+  });
+
   testWidgets('shows front nine subtotal for each scorecard player row', (
     WidgetTester tester,
   ) async {
@@ -3127,6 +3488,14 @@ DatosServidorService _existingFieldsService({
         return http.Response(leagueRoundsResponse, leagueRoundsStatusCode);
       }
 
+      if (accion == 'asocia_partida_a_liguilla') {
+        return http.Response(jsonEncode({'rpta': 'ok'}), 200);
+      }
+
+      if (accion == 'actualiza_jornada_partida') {
+        return http.Response("{'rpta':'ok'}", 200);
+      }
+
       if (accion == 'decision_participacion') {
         return http.Response(
           jsonEncode({'rpta': decisionParticipacionOk ? 'ok' : 'ko'}),
@@ -3242,6 +3611,14 @@ DatosServidorService _existingFieldsService({
     }),
   );
 }
+
+String _testBackendDate(DateTime date) {
+  return '${_testTwoDigits(date.year % 100)}'
+      '${_testTwoDigits(date.month)}'
+      '${_testTwoDigits(date.day)}000000';
+}
+
+String _testTwoDigits(int value) => value.toString().padLeft(2, '0');
 
 String _agendaDay(DateTime day) {
   return '${_twoDigits(day.year % 100)}'

@@ -298,6 +298,17 @@ class DatosServidorService {
     });
   }
 
+  Future<String> actualizaJornadaPartida({
+    required String idPartida,
+    required String jornada,
+  }) {
+    return _getTexto({
+      'accion': 'actualiza_jornada_partida',
+      'idPartida': idPartida,
+      'jornada': jornada,
+    });
+  }
+
   Future<String> enviaInvitacion({
     required String idLiguilla,
     required String movil,

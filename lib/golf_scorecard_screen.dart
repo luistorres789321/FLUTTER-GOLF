@@ -31,7 +31,11 @@ class GolfScorecardScreen extends StatefulWidget {
     this.differentRemotePlayRowsJson,
     this.datosServidorService,
     this.onPlayRowsJsonChanged,
+    this.onLeagueRoundChanged,
     this.isReadOnly = false,
+    this.leagueTitle = '',
+    this.leagueRound = '',
+    this.leagueRoundOptions = const [],
   });
 
   static const double _labelWidth = 180;
@@ -58,10 +62,14 @@ class GolfScorecardScreen extends StatefulWidget {
   final String? differentRemotePlayRowsJson;
   final DatosServidorService? datosServidorService;
   final ValueChanged<String>? onPlayRowsJsonChanged;
+  final Future<void> Function(String leagueRound)? onLeagueRoundChanged;
   final VoidCallback onExit;
   final Future<void> Function() onLeaveGame;
   final Future<void> Function() onDestroyGame;
   final bool isReadOnly;
+  final String leagueTitle;
+  final String leagueRound;
+  final List<int> leagueRoundOptions;
 
   @override
   State<GolfScorecardScreen> createState() => _GolfScorecardScreenState();
@@ -75,9 +83,12 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late List<String> _playRowUserIds;
   late List<String> _playRowPlayerLabels;
   late List<String> _playRowModifiedValues;
+  String? _leagueRoundOverride;
+  String? _leagueRoundError;
   String? _loadError;
   bool _isLeavingGame = false;
   bool _isDestroyingGame = false;
+  bool _isUpdatingLeagueRound = false;
 
   @override
   void initState() {
@@ -100,18 +111,20 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   @override
   void didUpdateWidget(covariant GolfScorecardScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialPlayRowsJson == oldWidget.initialPlayRowsJson) {
-      return;
+    if (widget.leagueRound != oldWidget.leagueRound) {
+      _leagueRoundOverride = null;
     }
 
-    _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
-    _playRowUserIds = _decodePlayRowUserIds(widget.initialPlayRowsJson);
-    _playRowPlayerLabels = _decodePlayRowPlayerLabels(
-      widget.initialPlayRowsJson,
-    );
-    _playRowModifiedValues = _decodePlayRowModifiedValues(
-      widget.initialPlayRowsJson,
-    );
+    if (widget.initialPlayRowsJson != oldWidget.initialPlayRowsJson) {
+      _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
+      _playRowUserIds = _decodePlayRowUserIds(widget.initialPlayRowsJson);
+      _playRowPlayerLabels = _decodePlayRowPlayerLabels(
+        widget.initialPlayRowsJson,
+      );
+      _playRowModifiedValues = _decodePlayRowModifiedValues(
+        widget.initialPlayRowsJson,
+      );
+    }
   }
 
   @override
@@ -267,6 +280,54 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
       );
     });
     widget.onPlayRowsJsonChanged?.call(_playRowsJsonString);
+  }
+
+  Future<void> _updateLeagueRound(String leagueRound) async {
+    final onLeagueRoundChanged = widget.onLeagueRoundChanged;
+    final trimmedRound = leagueRound.trim();
+    if (trimmedRound.isEmpty ||
+        onLeagueRoundChanged == null ||
+        _isUpdatingLeagueRound ||
+        widget.isReadOnly) {
+      return;
+    }
+
+    final currentRound = (_leagueRoundOverride ?? widget.leagueRound).trim();
+    if (trimmedRound == currentRound) {
+      return;
+    }
+
+    setState(() {
+      _isUpdatingLeagueRound = true;
+      _leagueRoundError = null;
+    });
+
+    try {
+      await onLeagueRoundChanged(trimmedRound);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _leagueRoundOverride = trimmedRound;
+        _leagueRoundError = null;
+      });
+    } catch (error) {
+      debugPrint('actualizaJornadaPartida error: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _leagueRoundError = 'No se pudo actualizar la jornada.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingLeagueRound = false;
+        });
+      }
+    }
   }
 
   String get _playRowsJsonString {
@@ -492,6 +553,16 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                 playRowLabels: _playRowPlayerLabels,
                                 idPartida: widget.idPartida,
                                 jugadores: widget.jugadores,
+                                leagueTitle: widget.leagueTitle,
+                                leagueRound:
+                                    _leagueRoundOverride ?? widget.leagueRound,
+                                leagueRoundOptions: widget.leagueRoundOptions,
+                                leagueRoundError: _leagueRoundError,
+                                isLeagueRoundUpdating: _isUpdatingLeagueRound,
+                                onLeagueRoundChanged:
+                                    widget.onLeagueRoundChanged == null
+                                    ? null
+                                    : _updateLeagueRound,
                                 loadError: _loadError,
                                 onPlayValueChanged: _updatePlayValue,
                                 isEditable: !widget.isReadOnly,
@@ -519,6 +590,12 @@ class _ScorecardCard extends StatelessWidget {
     required this.playRowLabels,
     required this.idPartida,
     required this.jugadores,
+    required this.leagueTitle,
+    required this.leagueRound,
+    required this.leagueRoundOptions,
+    required this.leagueRoundError,
+    required this.isLeagueRoundUpdating,
+    required this.onLeagueRoundChanged,
     required this.loadError,
     required this.onPlayValueChanged,
     required this.isEditable,
@@ -529,6 +606,12 @@ class _ScorecardCard extends StatelessWidget {
   final List<String> playRowLabels;
   final String idPartida;
   final String jugadores;
+  final String leagueTitle;
+  final String leagueRound;
+  final List<int> leagueRoundOptions;
+  final String? leagueRoundError;
+  final bool isLeagueRoundUpdating;
+  final ValueChanged<String>? onLeagueRoundChanged;
   final String? loadError;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
@@ -561,6 +644,28 @@ class _ScorecardCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (leagueTitle.trim().isNotEmpty ||
+                leagueRound.trim().isNotEmpty) ...[
+              _ScorecardLeagueHeader(
+                title: leagueTitle,
+                round: leagueRound,
+                roundOptions: leagueRoundOptions,
+                isUpdatingRound: isLeagueRoundUpdating,
+                onRoundChanged: onLeagueRoundChanged,
+              ),
+              if (leagueRoundError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  leagueRoundError!,
+                  style: const TextStyle(
+                    color: Color(0xFF9D433D),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+            ],
             _ScoreGrid(
               guideRows: guideRows,
               playRowValues: playRowValues,
@@ -591,6 +696,153 @@ class _ScorecardCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ScorecardLeagueHeader extends StatelessWidget {
+  const _ScorecardLeagueHeader({
+    required this.title,
+    required this.round,
+    required this.roundOptions,
+    required this.isUpdatingRound,
+    required this.onRoundChanged,
+  });
+
+  final String title;
+  final String round;
+  final List<int> roundOptions;
+  final bool isUpdatingRound;
+  final ValueChanged<String>? onRoundChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedTitle = title.trim();
+    final trimmedRound = round.trim();
+    final titleLabel = trimmedTitle.isEmpty ? 'Liguilla' : trimmedTitle;
+    final headerLabel = trimmedRound.isEmpty
+        ? titleLabel
+        : '$titleLabel - jornada: $trimmedRound';
+    final normalizedRoundOptions = _normalizedRoundOptions(
+      roundOptions,
+      currentRound: trimmedRound,
+    );
+    final canChangeRound =
+        trimmedRound.isNotEmpty &&
+        normalizedRoundOptions.isNotEmpty &&
+        onRoundChanged != null &&
+        !isUpdatingRound;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF2E4),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFC7D8B8)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.emoji_events, color: Color(0xFF567B37), size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: canChangeRound
+                ? PopupMenuButton<int>(
+                    tooltip: 'Cambiar jornada',
+                    onSelected: (value) => onRoundChanged?.call('$value'),
+                    itemBuilder: (context) {
+                      return [
+                        for (final round in normalizedRoundOptions)
+                          PopupMenuItem<int>(
+                            value: round,
+                            child: Text('jornada $round'),
+                          ),
+                      ];
+                    },
+                    child: _LeagueRoundButtonLabel(
+                      label: headerLabel,
+                      isUpdating: isUpdatingRound,
+                      showDropdown: true,
+                    ),
+                  )
+                : _LeagueRoundButtonLabel(
+                    label: headerLabel,
+                    isUpdating: isUpdatingRound,
+                    showDropdown: false,
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueRoundButtonLabel extends StatelessWidget {
+  const _LeagueRoundButtonLabel({
+    required this.label,
+    required this.isUpdating,
+    required this.showDropdown,
+  });
+
+  final String label;
+  final bool isUpdating;
+  final bool showDropdown;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8F1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFC7D8B8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF545B66),
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (isUpdating)
+            const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF567B37),
+              ),
+            )
+          else if (showDropdown)
+            const Icon(
+              Icons.arrow_drop_down,
+              color: Color(0xFF567B37),
+              size: 22,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+List<int> _normalizedRoundOptions(
+  List<int> options, {
+  required String currentRound,
+}) {
+  final parsedCurrentRound = int.tryParse(currentRound);
+  final values = <int>{
+    for (final option in options)
+      if (option > 0) option,
+    ?parsedCurrentRound,
+  }.toList()..sort();
+  values.removeWhere((value) => value <= 0);
+  return values;
 }
 
 class _ScoreGrid extends StatelessWidget {

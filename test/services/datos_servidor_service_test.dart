@@ -574,6 +574,29 @@ void main() {
       });
     });
 
+    test('construye la query de actualizaJornadaPartida', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.actualizaJornadaPartida(
+        idPartida: 'ABC123XYZ9',
+        jornada: '5',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'actualiza_jornada_partida',
+        'idPartida': 'ABC123XYZ9',
+        'jornada': '5',
+      });
+    });
+
     test('construye la query de enviaInvitacion', () async {
       late Uri requestedUri;
 
