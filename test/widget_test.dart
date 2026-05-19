@@ -280,6 +280,159 @@ void main() {
     expect(find.text('Handicap inicial: 18.5'), findsOneWidget);
   });
 
+  testWidgets('edits initial handicap in participants', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','aplicar_handicap_partidas':'S'}]",
+          invitedLeagueResponse:
+              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530',"
+              "'fecha_rechazo':'','pendiente_decidir':'N','handicap_inicial':12.0}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Participantes'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Editar handicap inicial'));
+    await tester.pumpAndSettle();
+    const handicapFieldKey = ValueKey('league_participant_handicap_field_1');
+    final editableText = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(handicapFieldKey),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(
+      editableText.keyboardType,
+      const TextInputType.numberWithOptions(decimal: true),
+    );
+    expect(editableText.controller.selection.baseOffset, 0);
+    expect(editableText.controller.selection.extentOffset, 2);
+    await tester.enterText(find.byKey(handicapFieldKey), '16.5');
+    await tester.tap(find.byTooltip('Guardar handicap inicial'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Handicap inicial: 16.5'), findsOneWidget);
+    final updateUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'actualiza_handicap_inicial',
+    );
+    expect(updateUri.queryParameters, {
+      'accion': 'actualiza_handicap_inicial',
+      'idUsuario': '1',
+      'idLiguilla': '7',
+      'handicap_inicial': '16.5',
+    });
+  });
+
+  testWidgets('can cancel initial handicap editing in participants', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','aplicar_handicap_partidas':'S'}]",
+          invitedLeagueResponse:
+              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530',"
+              "'fecha_rechazo':'','pendiente_decidir':'N','handicap_inicial':12.0}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Participantes'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Editar handicap inicial'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('league_participant_handicap_field_1')),
+      '16.5',
+    );
+    await tester.tap(find.byTooltip('Cancelar edicion'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Handicap inicial: 12'), findsOneWidget);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('actualiza_handicap_inicial')),
+    );
+  });
+
+  testWidgets('rejects initial handicap with more than one decimal', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          leaguesResponse:
+              "[{'idLiguilla':7,'titulo':'TORNEO VERANO','alias':'Auto','movil':'600000000',"
+              "'pendiente_decidir':'N','acabada':'','fecha_rechazo':'','aplicar_handicap_partidas':'S'}]",
+          invitedLeagueResponse:
+              "[{'idUsuario':'1','alias':'Ana','movil':'600111111','fecha_aceptacion':'260511101530',"
+              "'fecha_rechazo':'','pendiente_decidir':'N','handicap_inicial':12.0}]",
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Liguillas'));
+    await tester.tap(find.text('Liguillas'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Participantes'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Editar handicap inicial'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('league_participant_handicap_field_1')),
+      '16.55',
+    );
+    await tester.tap(find.byTooltip('Guardar handicap inicial'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Numero con hasta un decimal'), findsOneWidget);
+    expect(
+      requests.map((uri) => uri.queryParameters['accion']),
+      isNot(contains('actualiza_handicap_inicial')),
+    );
+  });
+
   testWidgets('opens league rounds screen and paginates', (
     WidgetTester tester,
   ) async {
@@ -3493,6 +3646,10 @@ DatosServidorService _existingFieldsService({
       }
 
       if (accion == 'actualiza_jornada_partida') {
+        return http.Response("{'rpta':'ok'}", 200);
+      }
+
+      if (accion == 'actualiza_handicap_inicial') {
         return http.Response("{'rpta':'ok'}", 200);
       }
 

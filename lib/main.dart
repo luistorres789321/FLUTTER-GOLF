@@ -5301,6 +5301,10 @@ String _leaguePlainNumberValue(String value) {
   return trimmedValue;
 }
 
+String _normalizedHandicapInput(String value) {
+  return value.trim().replaceAll(',', '.');
+}
+
 String _leagueYesNoValue(String value) {
   final normalizedValue = value.trim().toUpperCase();
   if (normalizedValue == '1' ||
@@ -5721,8 +5725,11 @@ class _LeagueParticipantsScreenState extends State<_LeagueParticipantsScreen> {
         else
           for (final participant in _participants) ...[
             _LeagueParticipantItem(
+              key: ValueKey('league_participant_${participant.idUsuario}'),
               participant: participant,
               showInitialHandicap: showInitialHandicap,
+              datosServidorService: widget.datosServidorService,
+              idLiguilla: widget.league.idLiguilla,
             ),
             const SizedBox(height: 10),
           ],
@@ -6366,20 +6373,174 @@ class _LeagueRoundScoreMetric extends StatelessWidget {
   }
 }
 
-class _LeagueParticipantItem extends StatelessWidget {
+class _LeagueParticipantItem extends StatefulWidget {
   const _LeagueParticipantItem({
+    super.key,
     required this.participant,
     required this.showInitialHandicap,
+    required this.datosServidorService,
+    required this.idLiguilla,
   });
 
   final _LeagueParticipant participant;
   final bool showInitialHandicap;
+  final DatosServidorService datosServidorService;
+  final String idLiguilla;
+
+  @override
+  State<_LeagueParticipantItem> createState() => _LeagueParticipantItemState();
+}
+
+class _LeagueParticipantItemState extends State<_LeagueParticipantItem> {
+  final _formKey = GlobalKey<FormState>();
+  final _handicapController = TextEditingController();
+  final _handicapFocusNode = FocusNode();
+  bool _isEditingHandicap = false;
+  bool _isSavingHandicap = false;
+  String _handicapInicial = '';
+  String? _handicapError;
+
+  @override
+  void initState() {
+    super.initState();
+    _handicapInicial = widget.participant.handicapInicial;
+    _handicapController.text = _leaguePlainNumberValue(_handicapInicial);
+    _handicapFocusNode.addListener(_selectHandicapTextOnFocus);
+  }
+
+  @override
+  void didUpdateWidget(_LeagueParticipantItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.participant.idUsuario != widget.participant.idUsuario ||
+        oldWidget.participant.handicapInicial !=
+            widget.participant.handicapInicial) {
+      _handicapInicial = widget.participant.handicapInicial;
+      if (!_isEditingHandicap) {
+        _handicapController.text = _leaguePlainNumberValue(_handicapInicial);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _handicapFocusNode.dispose();
+    _handicapController.dispose();
+    super.dispose();
+  }
+
+  void _selectHandicapTextOnFocus() {
+    if (!_handicapFocusNode.hasFocus) {
+      return;
+    }
+
+    _selectAllHandicapText();
+  }
+
+  void _selectAllHandicapText() {
+    _handicapController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _handicapController.text.length,
+    );
+  }
+
+  void _startEditingHandicap() {
+    setState(() {
+      _isEditingHandicap = true;
+      _handicapError = null;
+      _handicapController.text = _leaguePlainNumberValue(_handicapInicial);
+      _selectAllHandicapText();
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isEditingHandicap) {
+        return;
+      }
+
+      _handicapFocusNode.requestFocus();
+      _selectAllHandicapText();
+    });
+  }
+
+  void _cancelEditingHandicap() {
+    setState(() {
+      _isEditingHandicap = false;
+      _handicapError = null;
+      _handicapController.text = _leaguePlainNumberValue(_handicapInicial);
+    });
+  }
+
+  Future<void> _saveHandicap() async {
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    final handicapInicial = _normalizedHandicapInput(_handicapController.text);
+
+    setState(() {
+      _isSavingHandicap = true;
+      _handicapError = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService
+          .actualizaHandicapInicial(
+            idUsuario: widget.participant.idUsuario,
+            idLiguilla: widget.idLiguilla,
+            handicapInicial: handicapInicial,
+          );
+      debugPrint(
+        'actualizaHandicapInicial('
+        '${widget.participant.idUsuario}, ${widget.idLiguilla}, '
+        '$handicapInicial): $response',
+      );
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _handicapInicial = handicapInicial;
+        _isEditingHandicap = false;
+        _isSavingHandicap = false;
+      });
+    } catch (error) {
+      debugPrint('actualizaHandicapInicial fallo: $error');
+      if (error is DatosServidorException) {
+        debugPrint('actualizaHandicapInicial backend body: ${error.body}');
+      }
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isSavingHandicap = false;
+        _handicapError = 'No se pudo guardar el handicap inicial.';
+      });
+    }
+  }
+
+  String? _validateHandicap(String? value) {
+    final trimmedValue = value?.trim() ?? '';
+    if (trimmedValue.isEmpty) {
+      return 'Campo obligatorio';
+    }
+
+    if (!RegExp(r'^\d+([.,]\d)?$').hasMatch(trimmedValue)) {
+      return 'Numero con hasta un decimal';
+    }
+
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final initialHandicap = _leaguePlainNumberValue(
-      participant.handicapInicial,
-    );
+    final initialHandicap = _leaguePlainNumberValue(_handicapInicial);
+    final canEditHandicap =
+        widget.participant.idUsuario.trim().isNotEmpty &&
+        widget.idLiguilla.trim().isNotEmpty;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -6392,29 +6553,177 @@ class _LeagueParticipantItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            participant.alias.isEmpty ? 'Sin alias' : participant.alias,
+            widget.participant.alias.isEmpty
+                ? 'Sin alias'
+                : widget.participant.alias,
             style: const TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w800,
               color: Color(0xFF545B66),
             ),
           ),
-          if (participant.movil.isNotEmpty) ...[
+          if (widget.participant.movil.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
-              'Movil: ${participant.movil}',
+              'Movil: ${widget.participant.movil}',
               style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
             ),
           ],
-          if (showInitialHandicap && initialHandicap.isNotEmpty) ...[
+          if (widget.showInitialHandicap && initialHandicap.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(
-              'Handicap inicial: $initialHandicap',
-              style: const TextStyle(fontSize: 14, color: Color(0xFF6C737D)),
-            ),
+            if (_isEditingHandicap)
+              _LeagueInitialHandicapEditor(
+                formKey: _formKey,
+                controller: _handicapController,
+                isSaving: _isSavingHandicap,
+                error: _handicapError,
+                focusNode: _handicapFocusNode,
+                validator: _validateHandicap,
+                onSave: _saveHandicap,
+                onCancel: _cancelEditingHandicap,
+                onTap: _selectAllHandicapText,
+                participantId: widget.participant.idUsuario,
+              )
+            else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Handicap inicial: $initialHandicap',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF6C737D),
+                      ),
+                    ),
+                  ),
+                  if (canEditHandicap)
+                    IconButton(
+                      tooltip: 'Editar handicap inicial',
+                      onPressed: _startEditingHandicap,
+                      visualDensity: VisualDensity.compact,
+                      color: const Color(0xFF567B37),
+                      icon: const Icon(Icons.edit, size: 18),
+                    ),
+                ],
+              ),
           ],
           const SizedBox(height: 10),
-          _LeagueParticipantStatusLabel(participant: participant),
+          _LeagueParticipantStatusLabel(participant: widget.participant),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeagueInitialHandicapEditor extends StatelessWidget {
+  const _LeagueInitialHandicapEditor({
+    required this.formKey,
+    required this.controller,
+    required this.isSaving,
+    required this.error,
+    required this.focusNode,
+    required this.validator,
+    required this.onSave,
+    required this.onCancel,
+    required this.onTap,
+    required this.participantId,
+  });
+
+  final GlobalKey<FormState> formKey;
+  final TextEditingController controller;
+  final bool isSaving;
+  final String? error;
+  final FocusNode focusNode;
+  final FormFieldValidator<String> validator;
+  final VoidCallback onSave;
+  final VoidCallback onCancel;
+  final VoidCallback onTap;
+  final String participantId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  key: ValueKey(
+                    'league_participant_handicap_field_$participantId',
+                  ),
+                  controller: controller,
+                  focusNode: focusNode,
+                  enabled: !isSaving,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  textInputAction: TextInputAction.done,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
+                  ],
+                  onTap: onTap,
+                  validator: validator,
+                  decoration: InputDecoration(
+                    labelText: 'Handicap inicial',
+                    filled: true,
+                    fillColor: const Color.fromRGBO(255, 255, 255, 0.72),
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Color(0xFFD8D2C7)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF567B37),
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Guardar handicap inicial',
+                onPressed: isSaving ? null : onSave,
+                visualDensity: VisualDensity.compact,
+                color: const Color(0xFF235C3D),
+                icon: isSaving
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check, size: 20),
+              ),
+              IconButton(
+                tooltip: 'Cancelar edicion',
+                onPressed: isSaving ? null : onCancel,
+                visualDensity: VisualDensity.compact,
+                color: const Color(0xFF9D433D),
+                icon: const Icon(Icons.close, size: 20),
+              ),
+            ],
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              error!,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF9D433D),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ],
       ),
     );

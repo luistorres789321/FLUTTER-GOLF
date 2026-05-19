@@ -309,6 +309,19 @@ class DatosServidorService {
     });
   }
 
+  Future<String> actualizaHandicapInicial({
+    required String idUsuario,
+    required String idLiguilla,
+    required String handicapInicial,
+  }) {
+    return _getTexto({
+      'accion': 'actualiza_handicap_inicial',
+      'idUsuario': idUsuario,
+      'idLiguilla': idLiguilla,
+      'handicap_inicial': handicapInicial,
+    });
+  }
+
   Future<String> enviaInvitacion({
     required String idLiguilla,
     required String movil,

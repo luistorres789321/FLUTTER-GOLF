@@ -597,6 +597,31 @@ void main() {
       });
     });
 
+    test('construye la query de actualizaHandicapInicial', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.actualizaHandicapInicial(
+        idUsuario: '123',
+        idLiguilla: '7',
+        handicapInicial: '16.5',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'actualiza_handicap_inicial',
+        'idUsuario': '123',
+        'idLiguilla': '7',
+        'handicap_inicial': '16.5',
+      });
+    });
+
     test('construye la query de enviaInvitacion', () async {
       late Uri requestedUri;
 
