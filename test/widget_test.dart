@@ -2375,6 +2375,56 @@ void main() {
     );
   });
 
+  testWidgets('toggles scorecard information rows from the label column', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '1',
+          initialPlayRowsJson: '[]',
+          datosServidorService: _existingFieldsService(
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('metres'), findsOneWidget);
+    expect(find.text('handicap'), findsOneWidget);
+    expect(find.text('metres EPPA'), findsOneWidget);
+    expect(find.text('handicap EPPA'), findsOneWidget);
+    expect(find.text('metres BLANC'), findsOneWidget);
+    expect(find.text('handicap BLANC'), findsOneWidget);
+
+    await tester.tap(find.text('metres EPPA'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('metres'), findsNothing);
+    expect(find.text('handicap'), findsNothing);
+    expect(find.text('metres EPPA'), findsOneWidget);
+    expect(find.text('handicap EPPA'), findsOneWidget);
+    expect(find.text('metres BLANC'), findsNothing);
+    expect(find.text('handicap BLANC'), findsNothing);
+
+    await tester.tap(find.text('handicap EPPA'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('metres'), findsOneWidget);
+    expect(find.text('handicap'), findsOneWidget);
+    expect(find.text('metres EPPA'), findsOneWidget);
+    expect(find.text('handicap EPPA'), findsOneWidget);
+    expect(find.text('metres BLANC'), findsOneWidget);
+    expect(find.text('handicap BLANC'), findsOneWidget);
+  });
+
   testWidgets(
     'opens scorecard when start request fails but backend started game',
     (WidgetTester tester) async {

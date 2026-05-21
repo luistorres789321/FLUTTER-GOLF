@@ -86,6 +86,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   String? _leagueRoundOverride;
   String? _leagueRoundError;
   String? _loadError;
+  int? _selectedGuideRowPairIndex;
   bool _isLeavingGame = false;
   bool _isDestroyingGame = false;
   bool _isUpdatingLeagueRound = false;
@@ -162,6 +163,14 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
         _loadError = 'No se pudo cargar la configuracion del campo.';
       });
     }
+  }
+
+  void _toggleGuideRowPair(int pairIndex) {
+    setState(() {
+      _selectedGuideRowPairIndex = _selectedGuideRowPairIndex == null
+          ? pairIndex
+          : null;
+    });
   }
 
   Future<void> _showLeaveGameConfirmation() async {
@@ -565,6 +574,9 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                     : _updateLeagueRound,
                                 loadError: _loadError,
                                 onPlayValueChanged: _updatePlayValue,
+                                selectedGuideRowPairIndex:
+                                    _selectedGuideRowPairIndex,
+                                onGuideRowPairToggled: _toggleGuideRowPair,
                                 isEditable: !widget.isReadOnly,
                               ),
                             ),
@@ -598,6 +610,8 @@ class _ScorecardCard extends StatelessWidget {
     required this.onLeagueRoundChanged,
     required this.loadError,
     required this.onPlayValueChanged,
+    required this.selectedGuideRowPairIndex,
+    required this.onGuideRowPairToggled,
     required this.isEditable,
   });
 
@@ -615,6 +629,8 @@ class _ScorecardCard extends StatelessWidget {
   final String? loadError;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final int? selectedGuideRowPairIndex;
+  final ValueChanged<int> onGuideRowPairToggled;
   final bool isEditable;
 
   @override
@@ -671,6 +687,8 @@ class _ScorecardCard extends StatelessWidget {
               playRowValues: playRowValues,
               playRowLabels: playRowLabels,
               onPlayValueChanged: onPlayValueChanged,
+              selectedGuideRowPairIndex: selectedGuideRowPairIndex,
+              onGuideRowPairToggled: onGuideRowPairToggled,
               isEditable: isEditable,
             ),
             if (loadError != null) ...[
@@ -851,6 +869,8 @@ class _ScoreGrid extends StatelessWidget {
     required this.playRowValues,
     required this.playRowLabels,
     required this.onPlayValueChanged,
+    required this.selectedGuideRowPairIndex,
+    required this.onGuideRowPairToggled,
     required this.isEditable,
   });
 
@@ -859,16 +879,30 @@ class _ScoreGrid extends StatelessWidget {
   final List<String> playRowLabels;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final int? selectedGuideRowPairIndex;
+  final ValueChanged<int> onGuideRowPairToggled;
   final bool isEditable;
 
   @override
   Widget build(BuildContext context) {
     final handicapValues = _handicapValuesFromGuideRows(guideRows);
+    final visibleGuideRows = _visibleGuideRows(
+      guideRows,
+      selectedGuideRowPairIndex,
+    );
 
     return Column(
       children: [
         const _GridHeaderRow(),
-        ...guideRows.map(_GridDataRow.new),
+        ...visibleGuideRows.map((row) {
+          final pairIndex = _guideRowPairIndexForLabel(row.label);
+          return _GridDataRow(
+            row: row,
+            onLabelTap: pairIndex == null
+                ? null
+                : () => onGuideRowPairToggled(pairIndex),
+          );
+        }),
         ...playRowValues.asMap().entries.map((entry) {
           final rowIndex = entry.key;
           return _GridPlayRow(
@@ -943,9 +977,10 @@ class _GridHeaderRow extends StatelessWidget {
 }
 
 class _GridDataRow extends StatelessWidget {
-  const _GridDataRow(this.row);
+  const _GridDataRow({required this.row, required this.onLabelTap});
 
   final _ScoreRowData row;
+  final VoidCallback? onLabelTap;
 
   @override
   Widget build(BuildContext context) {
@@ -959,7 +994,10 @@ class _GridDataRow extends StatelessWidget {
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.symmetric(horizontal: 14),
             isLabel: true,
-            child: _RowLabel(row: row),
+            child: _GuideRowLabelTapTarget(
+              onTap: onLabelTap,
+              child: _RowLabel(row: row),
+            ),
           ),
           for (final value in row.frontValues)
             _GridCell.data(
@@ -1111,6 +1149,43 @@ List<String> _handicapValuesFromGuideRows(List<_ScoreRowData> guideRows) {
   }
 
   return const [];
+}
+
+const _guideRowLabelPairs = [
+  ['metres', 'handicap'],
+  ['metres eppa', 'handicap eppa'],
+  ['metres blanc', 'handicap blanc'],
+];
+
+List<_ScoreRowData> _visibleGuideRows(
+  List<_ScoreRowData> guideRows,
+  int? selectedPairIndex,
+) {
+  if (selectedPairIndex == null) {
+    return guideRows;
+  }
+
+  final rows = guideRows
+      .where(
+        (row) => _guideRowPairIndexForLabel(row.label) == selectedPairIndex,
+      )
+      .toList(growable: false);
+  return rows.isEmpty ? guideRows : rows;
+}
+
+int? _guideRowPairIndexForLabel(String label) {
+  final normalizedLabel = _normalizedGuideRowLabel(label);
+  for (var index = 0; index < _guideRowLabelPairs.length; index++) {
+    if (_guideRowLabelPairs[index].contains(normalizedLabel)) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+String _normalizedGuideRowLabel(String label) {
+  return label.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
 
 String _holeValue(List<String> values, int holeIndex) {
@@ -1376,6 +1451,36 @@ class _FoldCell extends StatelessWidget {
   }
 }
 
+class _GuideRowLabelTapTarget extends StatelessWidget {
+  const _GuideRowLabelTapTarget({required this.child, required this.onTap});
+
+  final Widget child;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = SizedBox.expand(
+      child: Align(alignment: Alignment.centerLeft, child: child),
+    );
+
+    if (onTap == null) {
+      return content;
+    }
+
+    return Semantics(
+      button: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: content,
+        ),
+      ),
+    );
+  }
+}
+
 class _RowLabel extends StatelessWidget {
   const _RowLabel({required this.row});
 
@@ -1635,7 +1740,11 @@ class _ScorecardConfiguration {
         includeTotals: true,
         selector: (hole) => hole.metres,
       ),
-      _rowFromMetric(label: 'handicap', selector: (hole) => hole.handicap),
+      _rowFromMetric(
+        label: 'handicap',
+        tone: _RowTone.lightYellow,
+        selector: (hole) => hole.handicap,
+      ),
       _rowFromMetric(
         label: 'metres EPPA',
         tone: _RowTone.red,
@@ -1644,10 +1753,12 @@ class _ScorecardConfiguration {
       ),
       _rowFromMetric(
         label: 'handicap EPPA',
+        tone: _RowTone.lightRed,
         selector: (hole) => hole.handicapEppa,
       ),
       _rowFromMetric(
         label: 'metres BLANC',
+        tone: _RowTone.lightGray,
         includeTotals: true,
         selector: (hole) => hole.metresBlanc,
       ),
@@ -1746,6 +1857,7 @@ List<_ScoreRowData> _buildGuideRows() {
     ),
     _ScoreRowData(
       label: 'handicap',
+      tone: _RowTone.lightYellow,
       frontValues: ['', '', '', '', '', '', '', '', ''],
       backValues: ['', '', '', '', '', '', '', '', ''],
       summaryValues: _emptySummary,
@@ -1759,12 +1871,14 @@ List<_ScoreRowData> _buildGuideRows() {
     ),
     _ScoreRowData(
       label: 'handicap EPPA',
+      tone: _RowTone.lightRed,
       frontValues: ['', '', '', '', '', '', '', '', ''],
       backValues: ['', '', '', '', '', '', '', '', ''],
       summaryValues: _emptySummary,
     ),
     _ScoreRowData(
       label: 'metres BLANC',
+      tone: _RowTone.lightGray,
       frontValues: ['', '', '', '', '', '', '', '', ''],
       backValues: ['', '', '', '', '', '', '', '', ''],
       summaryValues: _emptySummary,
@@ -1906,7 +2020,16 @@ class _DecodedPlayRow {
   final List<String> values;
 }
 
-enum _RowTone { base, yellow, red, mutedLabel, disabledPlay }
+enum _RowTone {
+  base,
+  yellow,
+  lightYellow,
+  red,
+  lightRed,
+  lightGray,
+  mutedLabel,
+  disabledPlay,
+}
 
 const _borderSide = BorderSide(
   color: Color.fromRGBO(88, 95, 102, 0.34),
@@ -1961,6 +2084,11 @@ BoxDecoration _dataDecoration(_RowTone tone, {required bool isLabel}) {
           colors: [Color(0xFFE7D665), Color(0xFFDECA58)],
         ),
       );
+    case _RowTone.lightYellow:
+      return const BoxDecoration(
+        border: Border.fromBorderSide(_borderSide),
+        color: Color(0xFFFFF8D6),
+      );
     case _RowTone.red:
       return const BoxDecoration(
         border: Border.fromBorderSide(_borderSide),
@@ -1969,6 +2097,16 @@ BoxDecoration _dataDecoration(_RowTone tone, {required bool isLabel}) {
           end: Alignment.bottomCenter,
           colors: [Color(0xFFCD6474), Color(0xFFBB4D5D)],
         ),
+      );
+    case _RowTone.lightRed:
+      return const BoxDecoration(
+        border: Border.fromBorderSide(_borderSide),
+        color: Color(0xFFFFE8EC),
+      );
+    case _RowTone.lightGray:
+      return const BoxDecoration(
+        border: Border.fromBorderSide(_borderSide),
+        color: Color(0xFFF0F2F3),
       );
     case _RowTone.mutedLabel:
       return BoxDecoration(
@@ -1998,6 +2136,9 @@ Color _toneTextColor(_RowTone tone) {
       return const Color(0xFFFFF7F8);
     case _RowTone.disabledPlay:
       return const Color.fromRGBO(84, 91, 102, 0.52);
+    case _RowTone.lightYellow:
+    case _RowTone.lightRed:
+    case _RowTone.lightGray:
     case _RowTone.base:
     case _RowTone.mutedLabel:
       return const Color(0xFF56606C);
