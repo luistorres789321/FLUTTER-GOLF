@@ -2800,6 +2800,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
   bool _isLoading = true;
   bool _isShowingQr = false;
   bool _isStartingGame = false;
+  bool _isAnnotatingOwnRound = false;
   final Set<String> _deletingPlayerIds = <String>{};
   String? _idPartida;
   String? _error;
@@ -3039,6 +3040,62 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
 
   bool _playersContainCurrentUser(List<_InvitedPlayer> players) {
     return players.any(_isCurrentUser);
+  }
+
+  Future<void> _annotateOwnRound() async {
+    final idPartida = _idPartida?.trim() ?? '';
+    final idUsuario = widget.idUsuario.trim();
+    if (idPartida.isEmpty ||
+        idUsuario.isEmpty ||
+        _isAnnotatingOwnRound ||
+        _playersContainCurrentUser(_players)) {
+      return;
+    }
+
+    _stopPlayersRefreshPolling();
+    setState(() {
+      _isAnnotatingOwnRound = true;
+      _error = null;
+    });
+
+    try {
+      final response = await widget.datosServidorService.anotaJugadorPartida(
+        idCampo: widget.fieldId,
+        idPartida: idPartida,
+        idUsuario: idUsuario,
+        esCreador: 'S',
+      );
+      debugPrint('anotaJugadorPartida($idPartida, $idUsuario): $response');
+      if (!_backendResponseIsOk(response)) {
+        throw FormatException('Respuesta no valida: $response');
+      }
+
+      final players = await _fetchPlayers(idPartida);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _players = players;
+        _error = null;
+      });
+    } catch (error) {
+      debugPrint('anotaJugadorPartida fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = 'No se pudo anotar tu salida.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAnnotatingOwnRound = false;
+        });
+        _startPlayersRefreshPolling();
+      }
+    }
   }
 
   Future<bool> _resetCurrentUserGameIfMissing(
@@ -3531,6 +3588,31 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
             style: TextStyle(fontSize: 15, color: Color(0xFF6C737D)),
           ),
         ),
+      if (!_playersContainCurrentUser(_players)) ...[
+        const SizedBox(height: 14),
+        FilledButton.icon(
+          onPressed: _idPartida == null || _isAnnotatingOwnRound
+              ? null
+              : () => unawaited(_annotateOwnRound()),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF235C3D),
+            disabledBackgroundColor: const Color(0xFF9BB4A7),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          icon: _isAnnotatingOwnRound
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.edit_note),
+          label: Text(
+            _isAnnotatingOwnRound ? 'Anotando...' : 'Salida en solitario',
+          ),
+        ),
+      ],
       const SizedBox(height: 14),
       FilledButton.icon(
         onPressed: _idPartida == null ? null : _showQr,

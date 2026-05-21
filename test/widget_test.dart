@@ -1651,6 +1651,49 @@ void main() {
     expect(find.text('Invitar a jugadores'), findsOneWidget);
   });
 
+  testWidgets('annotates own round and enables starting with one player', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jugadores'), findsOneWidget);
+    expect(find.text('Sin jugadores'), findsOneWidget);
+    expect(find.text('Empezar la Partida'), findsNothing);
+    expect(
+      find.widgetWithText(FilledButton, 'Salida en solitario'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Salida en solitario'));
+    await tester.pumpAndSettle();
+
+    final annotateUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'anota_jugador_partida',
+    );
+    expect(annotateUri.queryParameters['idCampo'], '1');
+    expect(annotateUri.queryParameters['idUsuario'], '123');
+    expect(annotateUri.queryParameters['es_creador'], 'S');
+    expect(annotateUri.queryParameters['idPartida'], isNotNull);
+
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('Sin jugadores'), findsNothing);
+    expect(find.text('Salida en solitario'), findsNothing);
+    expect(find.text('Empezar la Partida'), findsOneWidget);
+  });
+
   testWidgets(
     'renews invitation game when current user is missing from players',
     (WidgetTester tester) async {
