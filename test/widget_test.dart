@@ -1388,7 +1388,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.visibility).first);
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('idPartida: STATS1'), findsOneWidget);
+    expect(find.textContaining('idPartida: STATS1'), findsNothing);
+    expect(find.text('Jugadores: 2'), findsOneWidget);
     expect(find.text('Auto'), findsOneWidget);
     expect(find.text('Luis'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);

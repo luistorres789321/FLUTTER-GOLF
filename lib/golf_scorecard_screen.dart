@@ -700,7 +700,7 @@ class _ScorecardCard extends StatelessWidget {
             ],
             const SizedBox(height: 10),
             Text(
-              'idPartida: $idPartida · Jugadores: $jugadores',
+              'Jugadores: $jugadores',
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -927,50 +927,56 @@ class _GridHeaderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 56,
-      child: Row(
-        children: [
-          _GridCell.header(
-            width: GolfScorecardScreen._labelWidth,
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: const Text('FORAT'),
-          ),
-          for (final hole in _frontNine)
-            _GridCell.header(
-              width: GolfScorecardScreen._holeWidth,
-              child: Text('$hole'),
-            ),
-          _GridCell.header(
-            width: GolfScorecardScreen._subtotalWidth,
-            child: const SizedBox.shrink(),
-          ),
-          const _FoldCell(),
-          for (final hole in _backNine)
-            _GridCell.header(
-              width: GolfScorecardScreen._holeWidth,
-              child: Text('$hole'),
-            ),
-          _GridCell.header(
-            width: GolfScorecardScreen._subtotalWidth,
-            child: const SizedBox.shrink(),
-          ),
-          for (final header in _summaryHeaders)
-            _GridCell.header(
-              width: GolfScorecardScreen._summaryWidth,
-              child: Text(
-                header,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFF5F7F0),
-                  height: 1.1,
-                ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(7),
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              _GridCell.header(
+                width: GolfScorecardScreen._labelWidth,
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: const Text('FORAT'),
               ),
-            ),
-        ],
+              for (final hole in _frontNine)
+                _GridCell.header(
+                  width: GolfScorecardScreen._holeWidth,
+                  child: Text('$hole'),
+                ),
+              _GridCell.header(
+                width: GolfScorecardScreen._subtotalWidth,
+                child: const SizedBox.shrink(),
+              ),
+              const _FoldCell(),
+              for (final hole in _backNine)
+                _GridCell.header(
+                  width: GolfScorecardScreen._holeWidth,
+                  child: Text('$hole'),
+                ),
+              _GridCell.header(
+                width: GolfScorecardScreen._subtotalWidth,
+                child: const SizedBox.shrink(),
+              ),
+              for (final header in _summaryHeaders)
+                _GridCell.header(
+                  width: GolfScorecardScreen._summaryWidth,
+                  child: Text(
+                    header,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFF5F7F0),
+                      height: 1.1,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -991,6 +997,7 @@ class _GridDataRow extends StatelessWidget {
           _GridCell.data(
             width: GolfScorecardScreen._labelWidth,
             tone: row.tone,
+            decoration: _guideLabelReliefDecoration(row.tone),
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.symmetric(horizontal: 14),
             isLabel: true,
@@ -2125,6 +2132,50 @@ BoxDecoration _dataDecoration(_RowTone tone, {required bool isLabel}) {
         border: Border.fromBorderSide(_borderSide),
         color: Color.fromRGBO(255, 255, 255, 0.80),
       );
+  }
+}
+
+BoxDecoration _guideLabelReliefDecoration(_RowTone tone) {
+  return BoxDecoration(
+    border: const Border.fromBorderSide(_borderSide),
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: _guideLabelReliefColors(tone),
+    ),
+    boxShadow: const [
+      BoxShadow(
+        color: Color.fromRGBO(255, 255, 255, 0.72),
+        offset: Offset(-1.2, -1.2),
+        blurRadius: 1.4,
+      ),
+      BoxShadow(
+        color: Color.fromRGBO(31, 24, 19, 0.24),
+        offset: Offset(1.5, 1.6),
+        blurRadius: 2.4,
+      ),
+    ],
+  );
+}
+
+List<Color> _guideLabelReliefColors(_RowTone tone) {
+  switch (tone) {
+    case _RowTone.yellow:
+      return const [Color(0xFFF0E282), Color(0xFFD1BC43)];
+    case _RowTone.lightYellow:
+      return const [Color(0xFFFFFDF0), Color(0xFFFFEDAA)];
+    case _RowTone.red:
+      return const [Color(0xFFD97987), Color(0xFFB13F4F)];
+    case _RowTone.lightRed:
+      return const [Color(0xFFFFF8FA), Color(0xFFFFCED8)];
+    case _RowTone.lightGray:
+      return const [Color(0xFFFFFFFF), Color(0xFFDDE2E5)];
+    case _RowTone.mutedLabel:
+      return const [Color(0xFFF1F5F4), Color(0xFFD1DBD9)];
+    case _RowTone.disabledPlay:
+      return const [Color(0xFFF1F3F5), Color(0xFFD4D8DE)];
+    case _RowTone.base:
+      return const [Color(0xFFFFFFFF), Color(0xFFE8ECEC)];
   }
 }
 
