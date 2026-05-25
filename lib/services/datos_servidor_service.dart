@@ -79,6 +79,19 @@ class DatosServidorService {
     });
   }
 
+  Future<String> invitaConMovil({
+    required String movil,
+    required String idPartidaAnfitrion,
+    required String idUsuarioAnfitrion,
+  }) {
+    return _getTexto({
+      'accion': 'invita_con_movil',
+      'movil': movil,
+      'idPartida_anfitrion': idPartidaAnfitrion,
+      'idUsuario_anfitrion': idUsuarioAnfitrion,
+    });
+  }
+
   Future<String> quitaJugadorPartida({
     required String idPartida,
     required String idUsuario,
@@ -171,6 +184,7 @@ class DatosServidorService {
     String movil,
     String mail,
     String numeroFederadoGolf,
+    String numeroFederadoPitchput,
   ) {
     return _getTexto({
       'accion': 'alta_usuario_golf',
@@ -184,6 +198,7 @@ class DatosServidorService {
       'movil': movil,
       'mail': mail,
       'numero_federado_golf': numeroFederadoGolf,
+      'numero_federado_pitchput': numeroFederadoPitchput,
     });
   }
 
@@ -199,6 +214,7 @@ class DatosServidorService {
     String movil,
     String mail,
     String numeroFederadoGolf,
+    String numeroFederadoPitchput,
   ) {
     return _getTexto({
       'accion': 'edita_usuario_golf',
@@ -213,6 +229,7 @@ class DatosServidorService {
       'movil': movil,
       'mail': mail,
       'numero_federado_golf': numeroFederadoGolf,
+      'numero_federado_pitchput': numeroFederadoPitchput,
     });
   }
 

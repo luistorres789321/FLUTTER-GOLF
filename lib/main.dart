@@ -1793,7 +1793,10 @@ const _userInformationFields = [
   _UserInformationField(
     key: 'numeroFederadoGolf',
     label: 'Numero Federado Golf',
-    keyboardType: TextInputType.number,
+  ),
+  _UserInformationField(
+    key: 'numeroFederadoPitchput',
+    label: 'Numero Federado Pitch&Put',
   ),
 ];
 
@@ -3034,6 +3037,53 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     _refreshPlayersAndContinuePolling();
   }
 
+  Future<void> _openMobileInvitationDialog() async {
+    final idPartida = _idPartida?.trim() ?? '';
+    final idUsuario = widget.idUsuario.trim();
+    if (idPartida.isEmpty || idUsuario.isEmpty) {
+      return;
+    }
+
+    final sent = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return _MobileInvitationDialog(
+          datosServidorService: widget.datosServidorService,
+          idPartidaAnfitrion: idPartida,
+          idUsuarioAnfitrion: idUsuario,
+        );
+      },
+    );
+    if (!mounted || sent != true) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          backgroundColor: const Color(0xFF235C3D),
+          showCloseIcon: true,
+          content: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Invitación realizada con móvil',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    _refreshPlayersAndContinuePolling();
+  }
+
   bool _isCurrentUser(_InvitedPlayer player) {
     return player.idJugador.trim() == widget.idUsuario.trim();
   }
@@ -3683,7 +3733,224 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         textAlign: TextAlign.center,
         style: const TextStyle(fontSize: 12, color: Color(0xFF545B66)),
       ),
+      const SizedBox(height: 16),
+      FilledButton.icon(
+        onPressed: _idPartida == null
+            ? null
+            : () => unawaited(_openMobileInvitationDialog()),
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF567B37),
+          padding: const EdgeInsets.symmetric(vertical: 18),
+        ),
+        icon: const Icon(Icons.phone_iphone),
+        label: const Text('invita con movil'),
+      ),
     ];
+  }
+}
+
+class _MobileInvitationDialog extends StatefulWidget {
+  const _MobileInvitationDialog({
+    required this.datosServidorService,
+    required this.idPartidaAnfitrion,
+    required this.idUsuarioAnfitrion,
+  });
+
+  final DatosServidorService datosServidorService;
+  final String idPartidaAnfitrion;
+  final String idUsuarioAnfitrion;
+
+  @override
+  State<_MobileInvitationDialog> createState() =>
+      _MobileInvitationDialogState();
+}
+
+class _MobileInvitationDialogState extends State<_MobileInvitationDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _mobileController = TextEditingController();
+  bool _isSending = false;
+  String? _inviteError;
+
+  @override
+  void dispose() {
+    _mobileController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    setState(() {
+      _isSending = true;
+      _inviteError = null;
+    });
+
+    try {
+      final movil = _mobileController.text.trim();
+      final response = await widget.datosServidorService.invitaConMovil(
+        movil: movil,
+        idPartidaAnfitrion: widget.idPartidaAnfitrion,
+        idUsuarioAnfitrion: widget.idUsuarioAnfitrion,
+      );
+      debugPrint(
+        'invitaConMovil(${widget.idPartidaAnfitrion}, $movil): $response',
+      );
+      if (!_backendResponseIsOk(response)) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _inviteError = _backendResponseMessage(response);
+          _isSending = false;
+        });
+        return;
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      debugPrint('invitaConMovil fallo: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        final backendBody = error is DatosServidorException
+            ? error.body.trim()
+            : '';
+        _inviteError = backendBody.isNotEmpty
+            ? _backendResponseMessage(backendBody)
+            : error.toString();
+        _isSending = false;
+      });
+    }
+  }
+
+  String? _validateMobile(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) {
+      return 'Campo obligatorio';
+    }
+
+    final spaceCount = ' '.allMatches(text).length;
+    if (spaceCount > 3) {
+      return 'Movil puede tener hasta 3 espacios';
+    }
+
+    final digits = text.replaceAll(' ', '');
+    if (digits.length != 9 || !_digitsOnlyPattern.hasMatch(digits)) {
+      return 'Movil debe tener 9 digitos';
+    }
+
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _isSending
+                  ? null
+                  : () => Navigator.of(context).pop(false),
+              icon: const Icon(Icons.close),
+              label: const Text('Cancelar'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Invitar con movil',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              controller: _mobileController,
+              keyboardType: TextInputType.phone,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
+                LengthLimitingTextInputFormatter(12),
+              ],
+              enabled: !_isSending,
+              validator: _validateMobile,
+              decoration: InputDecoration(
+                labelText: 'Introduce un movil',
+                filled: true,
+                fillColor: const Color.fromRGBO(255, 255, 255, 0.72),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFD8D2C7)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: Color(0xFF567B37),
+                    width: 2,
+                  ),
+                ),
+              ),
+            ),
+            if (_inviteError != null) ...[
+              const SizedBox(height: 14),
+              Text(
+                _inviteError!,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF9D433D),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _isSending ? null : _submit,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF567B37),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+            icon: _isSending
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.send),
+            label: Text(_isSending ? 'Invitando...' : 'Adelante invitación'),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -7668,6 +7935,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       telefono: _text('telefono'),
       mail: _text('mail'),
       numeroFederadoGolf: _text('numeroFederadoGolf'),
+      numeroFederadoPitchput: _text('numeroFederadoPitchput'),
     );
   }
 
@@ -7825,6 +8093,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
           information.telefono,
           information.mail,
           information.numeroFederadoGolf,
+          information.numeroFederadoPitchput,
         );
         debugPrint('editaUsuario(${information.alias}): $response');
         return _UserRegistrationResult(
@@ -7844,6 +8113,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
         information.telefono,
         information.mail,
         information.numeroFederadoGolf,
+        information.numeroFederadoPitchput,
       );
       final registration = _userRegistrationResultFromBackend(response);
       debugPrint('altaUsuario(${information.alias}): $response');
@@ -8165,6 +8435,7 @@ class _UserInformation {
     required this.telefono,
     required this.mail,
     required this.numeroFederadoGolf,
+    required this.numeroFederadoPitchput,
   });
 
   final String idUsuario;
@@ -8178,6 +8449,7 @@ class _UserInformation {
   final String telefono;
   final String mail;
   final String numeroFederadoGolf;
+  final String numeroFederadoPitchput;
 
   static _UserInformation? fromJsonString(String? rawJson) {
     if (rawJson == null || rawJson.trim().isEmpty) {
@@ -8210,6 +8482,7 @@ class _UserInformation {
       telefono: _requiredValue(map, 'telefono'),
       mail: _requiredValue(map, 'mail'),
       numeroFederadoGolf: _requiredValue(map, 'numeroFederadoGolf'),
+      numeroFederadoPitchput: _requiredValue(map, 'numeroFederadoPitchput'),
     );
 
     return information.hasRequiredValues ? information : null;
@@ -8238,6 +8511,7 @@ class _UserInformation {
       'telefono' => telefono,
       'mail' => mail,
       'numeroFederadoGolf' => numeroFederadoGolf,
+      'numeroFederadoPitchput' => numeroFederadoPitchput,
       _ => '',
     };
   }
@@ -8257,6 +8531,7 @@ class _UserInformation {
       'telefono': telefono,
       'mail': mail,
       'numeroFederadoGolf': numeroFederadoGolf,
+      'numeroFederadoPitchput': numeroFederadoPitchput,
     };
   }
 
@@ -8273,6 +8548,7 @@ class _UserInformation {
       telefono: telefono,
       mail: mail,
       numeroFederadoGolf: numeroFederadoGolf,
+      numeroFederadoPitchput: numeroFederadoPitchput,
     );
   }
 }

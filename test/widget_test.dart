@@ -1652,6 +1652,78 @@ void main() {
     expect(find.text('Invitar a jugadores'), findsOneWidget);
   });
 
+  testWidgets('invites a player by mobile from QR screen', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Invitar a jugadores'));
+    await tester.pumpAndSettle();
+
+    final createUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'crea_partida',
+    );
+    final idPartida = createUri.queryParameters['idPartida']!;
+    expect(find.text('$idPartida,123'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'invita con movil'),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'invita con movil'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'invita con movil'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invitar con movil'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Cancelar'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextFormField, 'Introduce un movil'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(find.byType(TextFormField), '60011111');
+    await tester.tap(find.widgetWithText(FilledButton, 'Adelante invitación'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Movil debe tener 9 digitos'), findsOneWidget);
+    expect(
+      requests.where(
+        (uri) => uri.queryParameters['accion'] == 'invita_con_movil',
+      ),
+      isEmpty,
+    );
+
+    await tester.enterText(find.byType(TextFormField), '600 111 111');
+    await tester.tap(find.widgetWithText(FilledButton, 'Adelante invitación'));
+    await tester.pumpAndSettle();
+
+    final inviteUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'invita_con_movil',
+    );
+    expect(inviteUri.queryParameters, {
+      'accion': 'invita_con_movil',
+      'movil': '600 111 111',
+      'idPartida_anfitrion': idPartida,
+      'idUsuario_anfitrion': '123',
+    });
+    expect(find.text('Invitación realizada con móvil'), findsOneWidget);
+  });
+
   testWidgets('annotates own round and enables starting with one player', (
     WidgetTester tester,
   ) async {
@@ -2311,6 +2383,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_horizontalScrollAncestorOfButton('Salir'), findsNothing);
+    expect(find.byKey(const ValueKey('scorecard_pair_icon')), findsOneWidget);
     expect(find.textContaining('"hoyo_1"'), findsNothing);
     expect(find.text('45'), findsOneWidget);
     expect(find.text('36'), findsNWidgets(2));
@@ -3049,6 +3122,54 @@ void main() {
     expect(savedInformation['idUsuario'], '123');
   });
 
+  testWidgets('sends alphanumeric federation numbers during registration', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final requests = <Uri>[];
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(requests: requests),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Auto');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Nombre');
+    await tester.enterText(find.byType(TextFormField).at(2), 'Apellidos');
+    await tester.enterText(find.byType(TextFormField).at(7), '600000000');
+    await tester.enterText(
+      find.byType(TextFormField).at(8),
+      'auto@example.com',
+    );
+    await tester.enterText(find.byType(TextFormField).at(9), 'GOLF123A');
+    await tester.enterText(find.byType(TextFormField).at(10), 'PP456B');
+
+    await tester.ensureVisible(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar informacion'));
+    await tester.pumpAndSettle();
+
+    final altaUsuarioUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'alta_usuario_golf',
+    );
+    expect(
+      altaUsuarioUri.queryParameters,
+      containsPair('numero_federado_golf', 'GOLF123A'),
+    );
+    expect(
+      altaUsuarioUri.queryParameters,
+      containsPair('numero_federado_pitchput', 'PP456B'),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedInformation = jsonDecode(
+      prefs.getString('saved_user_information_json')!,
+    );
+    expect(savedInformation['numeroFederadoGolf'], 'GOLF123A');
+    expect(savedInformation['numeroFederadoPitchput'], 'PP456B');
+  });
+
   testWidgets(
     'uses backend mobile user id during registration after confirmation',
     (WidgetTester tester) async {
@@ -3662,6 +3783,7 @@ DatosServidorService _existingFieldsService({
   bool crearLiguillaOk = true,
   bool decisionParticipacionOk = true,
   String enviaInvitacionResponse = '{"rpta":"ok"}',
+  String invitaConMovilResponse = '{"rpta":"ok"}',
   List<Uri>? requests,
   String initialStateResponse = "{'empezada':'','ultima_modificacion':''}",
   String startGameResponse = '{"rpta":"ok"}',
@@ -3756,6 +3878,10 @@ DatosServidorService _existingFieldsService({
 
       if (accion == 'envia_invitacion') {
         return http.Response(enviaInvitacionResponse, 200);
+      }
+
+      if (accion == 'invita_con_movil') {
+        return http.Response(invitaConMovilResponse, 200);
       }
 
       if (accion == 'crea_partida') {
@@ -3974,7 +4100,8 @@ String _userInformationJson({String alias = 'Auto'}) {
     'provincia': 'Madrid',
     'telefono': '600000000',
     'mail': 'auto@example.com',
-    'numeroFederadoGolf': '12345',
+    'numeroFederadoGolf': 'GOLF123A',
+    'numeroFederadoPitchput': 'PP456B',
   });
 }
 

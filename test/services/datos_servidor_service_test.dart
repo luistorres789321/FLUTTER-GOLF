@@ -187,6 +187,31 @@ void main() {
       });
     });
 
+    test('construye la query de invitaConMovil', () async {
+      late Uri requestedUri;
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response("{'rpta':'ok'}", 200);
+        }),
+      );
+
+      final result = await service.invitaConMovil(
+        movil: '600 111 111',
+        idPartidaAnfitrion: 'ANFITRION1',
+        idUsuarioAnfitrion: 'USUARIO1',
+      );
+
+      expect(result, "{'rpta':'ok'}");
+      expect(requestedUri.queryParameters, {
+        'accion': 'invita_con_movil',
+        'movil': '600 111 111',
+        'idPartida_anfitrion': 'ANFITRION1',
+        'idUsuario_anfitrion': 'USUARIO1',
+      });
+    });
+
     test('construye la query de quitaJugadorPartida', () async {
       late Uri requestedUri;
 
@@ -309,7 +334,8 @@ void main() {
         'Madrid',
         '600000000',
         'auto@example.com',
-        '12345',
+        'GOLF123A',
+        'PP456B',
       );
 
       expect(result, "{'rpta':'ok'}");
@@ -324,7 +350,8 @@ void main() {
         'provincia': 'Madrid',
         'movil': '600000000',
         'mail': 'auto@example.com',
-        'numero_federado_golf': '12345',
+        'numero_federado_golf': 'GOLF123A',
+        'numero_federado_pitchput': 'PP456B',
       });
     });
 
@@ -368,7 +395,8 @@ void main() {
         'Madrid',
         '600000000',
         'auto@example.com',
-        '12345',
+        'GOLF123A',
+        'PP456B',
       );
 
       expect(result, '{"rpta":"ok"}');
@@ -384,7 +412,8 @@ void main() {
         'provincia': 'Madrid',
         'movil': '600000000',
         'mail': 'auto@example.com',
-        'numero_federado_golf': '12345',
+        'numero_federado_golf': 'GOLF123A',
+        'numero_federado_pitchput': 'PP456B',
       });
     });
 

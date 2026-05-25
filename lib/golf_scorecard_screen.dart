@@ -422,35 +422,41 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: widget.onExit,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFFF6F2EA),
-                                  backgroundColor: const Color.fromRGBO(
-                                    11,
-                                    36,
-                                    26,
-                                    0.32,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: widget.onExit,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFFF6F2EA),
+                                    backgroundColor: const Color.fromRGBO(
+                                      11,
+                                      36,
+                                      26,
+                                      0.32,
+                                    ),
+                                    side: const BorderSide(
+                                      color: Color(0xFFF6F2EA),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 18,
+                                      vertical: 14,
+                                    ),
                                   ),
-                                  side: const BorderSide(
-                                    color: Color(0xFFF6F2EA),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 18,
-                                    vertical: 14,
-                                  ),
+                                  icon: const Icon(Icons.arrow_back),
+                                  label: const Text('Salir'),
                                 ),
-                                icon: const Icon(Icons.arrow_back),
-                                label: const Text('Salir'),
-                              ),
-                              if (!widget.isReadOnly) ...[
-                                const SizedBox(height: 10),
-                                ConstrainedBox(
+                                const Spacer(),
+                                const _PairPlayersIcon(),
+                              ],
+                            ),
+                            if (!widget.isReadOnly) ...[
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: ConstrainedBox(
                                   constraints: BoxConstraints(
                                     maxWidth: availableWidth,
                                   ),
@@ -545,9 +551,9 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                     ],
                                   ),
                                 ),
-                              ],
+                              ),
                             ],
-                          ),
+                          ],
                         ),
                         const SizedBox(height: 12),
                         Center(
@@ -587,6 +593,41 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                   );
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PairPlayersIcon extends StatelessWidget {
+  const _PairPlayersIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Pareja',
+      child: Container(
+        key: const ValueKey('scorecard_pair_icon'),
+        width: 66,
+        height: 48,
+        decoration: BoxDecoration(
+          color: const Color.fromRGBO(246, 242, 234, 0.20),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFFF6F2EA)),
+        ),
+        child: const Stack(
+          children: [
+            Positioned(
+              left: 9,
+              top: 10,
+              child: Icon(Icons.person, color: Color(0xFFF6F2EA), size: 28),
+            ),
+            Positioned(
+              right: 9,
+              top: 10,
+              child: Icon(Icons.person, color: Color(0xFFD7E7CF), size: 28),
             ),
           ],
         ),
