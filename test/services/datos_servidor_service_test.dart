@@ -212,6 +212,35 @@ void main() {
       });
     });
 
+    test('construye la query de establecerParejas', () async {
+      late Uri requestedUri;
+      const pairsJson =
+          '[{"pareja":1,"idUsuario1":"USUARIO1","idUsuario2":"USUARIO2"}]';
+
+      final service = DatosServidorService(
+        client: MockClient((request) async {
+          requestedUri = request.url;
+          return http.Response('{"rtpta":"ok"}', 200);
+        }),
+      );
+
+      final result = await service.establecerParejas(
+        idPartida: 'PARTIDA123',
+        json: pairsJson,
+      );
+
+      expect(result, '{"rtpta":"ok"}');
+      expect(requestedUri.queryParameters, {
+        'accion': 'establecer_parejas',
+        'json': pairsJson,
+        'idPartida': 'PARTIDA123',
+      });
+      expect(
+        service.establecerParejasUri(idPartida: 'PARTIDA123', json: pairsJson),
+        requestedUri,
+      );
+    });
+
     test('construye la query de quitaJugadorPartida', () async {
       late Uri requestedUri;
 

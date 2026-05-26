@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_golf/services/datos_servidor_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _frontNine = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const _backNine = [10, 11, 12, 13, 14, 15, 16, 17, 18];
@@ -83,9 +84,14 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late List<String> _playRowUserIds;
   late List<String> _playRowPlayerLabels;
   late List<String> _playRowModifiedValues;
+  late List<int> _playRowPairNumbers;
+  Map<int, int> _playerPairColorIndexes = const {};
+  int _nextPairColorIndex = 0;
   String? _leagueRoundOverride;
   String? _leagueRoundError;
   String? _loadError;
+  String? _pairBackendResponse;
+  String? _pairBackendUrl;
   int? _selectedGuideRowPairIndex;
   bool _isLeavingGame = false;
   bool _isDestroyingGame = false;
@@ -106,6 +112,13 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     _playRowModifiedValues = _decodePlayRowModifiedValues(
       widget.initialPlayRowsJson,
     );
+    _playRowPairNumbers = _decodePlayRowPairNumbers(widget.initialPlayRowsJson);
+    _playerPairColorIndexes = _pairColorIndexesFromPairNumbers(
+      _playRowPairNumbers,
+    );
+    _nextPairColorIndex = _nextPairColorIndexFromPairNumbers(
+      _playRowPairNumbers,
+    );
     _loadConfiguration();
   }
 
@@ -124,6 +137,15 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
       );
       _playRowModifiedValues = _decodePlayRowModifiedValues(
         widget.initialPlayRowsJson,
+      );
+      _playRowPairNumbers = _decodePlayRowPairNumbers(
+        widget.initialPlayRowsJson,
+      );
+      _playerPairColorIndexes = _pairColorIndexesFromPairNumbers(
+        _playRowPairNumbers,
+      );
+      _nextPairColorIndex = _nextPairColorIndexFromPairNumbers(
+        _playRowPairNumbers,
       );
     }
   }
@@ -281,6 +303,179 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     );
   }
 
+  Future<void> _openPairDialog() async {
+    final result = await showDialog<_PairDialogResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return _PairPlayersDialog(
+          players: _scorecardPlayers,
+          pairColorIndexes: _playerPairColorIndexes,
+          nextPairColorIndex: _nextPairColorIndex,
+        );
+      },
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    final pairJson = _pairsJson(result.pairColorIndexes);
+    final pairBackendUrl = _datosServidorService
+        .establecerParejasUri(idPartida: widget.idPartida, json: pairJson)
+        .toString();
+    await _storePairBackendDebugInfo(url: pairBackendUrl);
+
+    try {
+      final response = await _datosServidorService.establecerParejas(
+        idPartida: widget.idPartida,
+        json: pairJson,
+      );
+      await _storePairBackendDebugInfo(url: pairBackendUrl, response: response);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!_scorecardBackendResponseIsOk(response)) {
+        setState(() {
+          _loadError = 'No se pudieron establecer las parejas.';
+          _pairBackendResponse = response;
+          _pairBackendUrl = pairBackendUrl;
+        });
+        await _showPairBackendResponseDialog(response);
+        return;
+      }
+
+      setState(() {
+        _applyPairDialogResult(result);
+        _pairBackendResponse = response;
+        _pairBackendUrl = pairBackendUrl;
+        _loadError = null;
+      });
+      widget.onPlayRowsJsonChanged?.call(_playRowsJsonString);
+    } catch (error) {
+      debugPrint('establecerParejas error: $error');
+      await _storePairBackendDebugInfo(
+        url: pairBackendUrl,
+        response: 'ERROR: $error',
+      );
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = 'No se pudieron establecer las parejas.';
+        _pairBackendResponse = 'ERROR: $error';
+        _pairBackendUrl = pairBackendUrl;
+      });
+    }
+  }
+
+  void _applyPairDialogResult(_PairDialogResult result) {
+    final pairNumbers = _pairNumbersFromPairColorIndexes(
+      result.pairColorIndexes,
+      _playRowValues.length,
+    );
+    final rowOrder = _rowOrderByPairNumbers(pairNumbers);
+
+    _playRowValues = _reorderedList(_playRowValues, rowOrder);
+    _playRowUserIds = _reorderedList(_playRowUserIds, rowOrder);
+    _playRowPlayerLabels = _reorderedList(_playRowPlayerLabels, rowOrder);
+    _playRowModifiedValues = _reorderedList(_playRowModifiedValues, rowOrder);
+    _playRowPairNumbers = _reorderedList(pairNumbers, rowOrder);
+    _playerPairColorIndexes = _pairColorIndexesFromPairNumbers(
+      _playRowPairNumbers,
+    );
+    _nextPairColorIndex = _nextPairColorIndexFromPairNumbers(
+      _playRowPairNumbers,
+    );
+  }
+
+  Future<void> _storePairBackendDebugInfo({
+    required String url,
+    String? response,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_establecer_parejas_url', url);
+      if (response != null) {
+        await prefs.setString('last_establecer_parejas_response', response);
+      }
+    } catch (error) {
+      debugPrint('guardar url establecerParejas error: $error');
+    }
+  }
+
+  Future<void> _showPairBackendResponseDialog(String response) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Respuesta backend'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: SingleChildScrollView(child: SelectableText(response)),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  List<_PairPlayer> get _scorecardPlayers {
+    return List.generate(_playRowValues.length, (rowIndex) {
+      final label = rowIndex < _playRowPlayerLabels.length
+          ? _playRowPlayerLabels[rowIndex].trim()
+          : '';
+      final userId = rowIndex < _playRowUserIds.length
+          ? _playRowUserIds[rowIndex].trim()
+          : '';
+      return _PairPlayer(
+        rowIndex: rowIndex,
+        userId: userId,
+        label: label.isEmpty ? 'Jugador ${rowIndex + 1}' : label,
+      );
+    }, growable: false);
+  }
+
+  String _pairsJson(Map<int, int> pairColorIndexes) {
+    final playersByRowIndex = {
+      for (final player in _scorecardPlayers) player.rowIndex: player,
+    };
+    final groupedPlayers = <int, List<_PairPlayer>>{};
+    for (final entry in pairColorIndexes.entries) {
+      final player = playersByRowIndex[entry.key];
+      if (player == null) {
+        continue;
+      }
+      groupedPlayers
+          .putIfAbsent(entry.value, () => <_PairPlayer>[])
+          .add(player);
+    }
+
+    final groupedEntries =
+        groupedPlayers.entries
+            .where((entry) => entry.value.length == 2)
+            .toList(growable: false)
+          ..sort((a, b) => a.key.compareTo(b.key));
+    final pairs = <Map<String, Object>>[
+      for (var index = 0; index < groupedEntries.length; index++)
+        {
+          'pareja': index + 1,
+          'idUsuario1': groupedEntries[index].value[0].userId,
+          'idUsuario2': groupedEntries[index].value[1].userId,
+        },
+    ];
+
+    return jsonEncode(pairs);
+  }
+
   void _updatePlayValue(int rowIndex, int holeIndex, String value) {
     setState(() {
       _playRowValues[rowIndex][holeIndex] = value;
@@ -350,11 +545,15 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
       final modified = rowIndex < _playRowModifiedValues.length
           ? _playRowModifiedValues[rowIndex]
           : '';
+      final pairNumber = rowIndex < _playRowPairNumbers.length
+          ? _playRowPairNumbers[rowIndex]
+          : 0;
       final values = _normalizedPlayValues(_playRowValues[rowIndex]);
 
       return <String, String>{
         if (userId.isNotEmpty) 'idUsuario': userId,
         'jugador': playerLabel.isEmpty ? '${rowIndex + 1}' : playerLabel,
+        if (pairNumber > 0) 'pareja': '$pairNumber',
         'modificado': modified,
         for (var holeIndex = 0; holeIndex < 18; holeIndex++)
           'hoyo_${holeIndex + 1}': values[holeIndex],
@@ -449,7 +648,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                   label: const Text('Salir'),
                                 ),
                                 const Spacer(),
-                                const _PairPlayersIcon(),
+                                _PairPlayersIcon(onPressed: _openPairDialog),
                               ],
                             ),
                             if (!widget.isReadOnly) ...[
@@ -566,6 +765,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                 guideRows: _guideRows,
                                 playRowValues: _playRowValues,
                                 playRowLabels: _playRowPlayerLabels,
+                                playRowPairNumbers: _playRowPairNumbers,
                                 idPartida: widget.idPartida,
                                 jugadores: widget.jugadores,
                                 leagueTitle: widget.leagueTitle,
@@ -579,6 +779,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                     ? null
                                     : _updateLeagueRound,
                                 loadError: _loadError,
+                                pairBackendResponse: _pairBackendResponse,
+                                pairBackendUrl: _pairBackendUrl,
                                 onPlayValueChanged: _updatePlayValue,
                                 selectedGuideRowPairIndex:
                                     _selectedGuideRowPairIndex,
@@ -602,38 +804,290 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 }
 
 class _PairPlayersIcon extends StatelessWidget {
-  const _PairPlayersIcon();
+  const _PairPlayersIcon({required this.onPressed});
+
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
       message: 'Pareja',
-      child: Container(
+      child: InkWell(
         key: const ValueKey('scorecard_pair_icon'),
-        width: 66,
-        height: 48,
-        decoration: BoxDecoration(
-          color: const Color.fromRGBO(246, 242, 234, 0.20),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xFFF6F2EA)),
-        ),
-        child: const Stack(
-          children: [
-            Positioned(
-              left: 9,
-              top: 10,
-              child: Icon(Icons.person, color: Color(0xFFF6F2EA), size: 28),
-            ),
-            Positioned(
-              right: 9,
-              top: 10,
-              child: Icon(Icons.person, color: Color(0xFFD7E7CF), size: 28),
-            ),
-          ],
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          width: 66,
+          height: 48,
+          decoration: BoxDecoration(
+            color: const Color.fromRGBO(246, 242, 234, 0.20),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFF6F2EA)),
+          ),
+          child: const Stack(
+            children: [
+              Positioned(
+                left: 9,
+                top: 10,
+                child: Icon(Icons.person, color: Color(0xFFF6F2EA), size: 28),
+              ),
+              Positioned(
+                right: 9,
+                top: 10,
+                child: Icon(Icons.person, color: Color(0xFFD7E7CF), size: 28),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _PairPlayersDialog extends StatefulWidget {
+  const _PairPlayersDialog({
+    required this.players,
+    required this.pairColorIndexes,
+    required this.nextPairColorIndex,
+  });
+
+  final List<_PairPlayer> players;
+  final Map<int, int> pairColorIndexes;
+  final int nextPairColorIndex;
+
+  @override
+  State<_PairPlayersDialog> createState() => _PairPlayersDialogState();
+}
+
+class _PairPlayersDialogState extends State<_PairPlayersDialog> {
+  late Map<int, int> _pairColorIndexes;
+  late int _nextPairColorIndex;
+  final List<int> _selectedRowIndexes = <int>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _pairColorIndexes = Map<int, int>.of(widget.pairColorIndexes);
+    _nextPairColorIndex = widget.nextPairColorIndex;
+  }
+
+  void _togglePlayer(int rowIndex) {
+    setState(() {
+      if (_selectedRowIndexes.remove(rowIndex)) {
+        return;
+      }
+
+      if (_selectedRowIndexes.length == 2) {
+        _selectedRowIndexes.removeAt(0);
+      }
+      _selectedRowIndexes.add(rowIndex);
+    });
+  }
+
+  void _createPair() {
+    if (_selectedRowIndexes.length != 2) {
+      return;
+    }
+
+    setState(() {
+      final selected = _selectedRowIndexes.toList(growable: false);
+      for (final rowIndex in selected) {
+        final previousColorIndex = _pairColorIndexes[rowIndex];
+        if (previousColorIndex == null) {
+          continue;
+        }
+        _pairColorIndexes.removeWhere(
+          (_, colorIndex) => colorIndex == previousColorIndex,
+        );
+      }
+
+      final pairColorIndex = _nextPairColorIndex++;
+      for (final rowIndex in selected) {
+        _pairColorIndexes[rowIndex] = pairColorIndex;
+      }
+      _selectedRowIndexes.clear();
+    });
+  }
+
+  void _finish() {
+    Navigator.of(context).pop(
+      _PairDialogResult(
+        pairColorIndexes: Map<int, int>.unmodifiable(_pairColorIndexes),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.close),
+              label: const Text('Cancelar'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Haz click sobre los jugadores, y pulsa Crear Pareja',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 420,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 360),
+          child: widget.players.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text('Sin jugadores'),
+                  ),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: widget.players.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final player = widget.players[index];
+                    return _PairPlayerTile(
+                      player: player,
+                      isSelected: _selectedRowIndexes.contains(player.rowIndex),
+                      pairColorIndex: _pairColorIndexes[player.rowIndex],
+                      onTap: () => _togglePlayer(player.rowIndex),
+                    );
+                  },
+                ),
+        ),
+      ),
+      actions: [
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _selectedRowIndexes.length == 2 ? _createPair : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF567B37),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                icon: const Icon(Icons.group_add),
+                label: const Text('Crea Pareja'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _finish,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF567B37),
+                  side: const BorderSide(color: Color(0xFF567B37)),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                icon: const Icon(Icons.check),
+                label: const Text('Hecho'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _PairPlayerTile extends StatelessWidget {
+  const _PairPlayerTile({
+    required this.player,
+    required this.isSelected,
+    required this.pairColorIndex,
+    required this.onTap,
+  });
+
+  final _PairPlayer player;
+  final bool isSelected;
+  final int? pairColorIndex;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final pairColorIndex = this.pairColorIndex;
+    final pairColor = pairColorIndex == null
+        ? const Color(0xFFFFFFFF)
+        : _pairColorForIndex(pairColorIndex);
+    final borderColor = isSelected
+        ? const Color(0xFF235C3D)
+        : pairColorIndex == null
+        ? const Color(0xFFD8D2C7)
+        : _pairBorderColorForIndex(pairColorIndex);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          constraints: const BoxConstraints(minHeight: 50),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFFEAF2E4) : pairColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                isSelected ? Icons.check_circle : Icons.person,
+                color: isSelected
+                    ? const Color(0xFF235C3D)
+                    : const Color(0xFF567B37),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  player.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF545B66),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PairPlayer {
+  const _PairPlayer({
+    required this.rowIndex,
+    required this.userId,
+    required this.label,
+  });
+
+  final int rowIndex;
+  final String userId;
+  final String label;
+}
+
+class _PairDialogResult {
+  const _PairDialogResult({required this.pairColorIndexes});
+
+  final Map<int, int> pairColorIndexes;
 }
 
 class _ScorecardCard extends StatelessWidget {
@@ -641,6 +1095,7 @@ class _ScorecardCard extends StatelessWidget {
     required this.guideRows,
     required this.playRowValues,
     required this.playRowLabels,
+    required this.playRowPairNumbers,
     required this.idPartida,
     required this.jugadores,
     required this.leagueTitle,
@@ -650,6 +1105,8 @@ class _ScorecardCard extends StatelessWidget {
     required this.isLeagueRoundUpdating,
     required this.onLeagueRoundChanged,
     required this.loadError,
+    required this.pairBackendResponse,
+    required this.pairBackendUrl,
     required this.onPlayValueChanged,
     required this.selectedGuideRowPairIndex,
     required this.onGuideRowPairToggled,
@@ -659,6 +1116,7 @@ class _ScorecardCard extends StatelessWidget {
   final List<_ScoreRowData> guideRows;
   final List<List<String>> playRowValues;
   final List<String> playRowLabels;
+  final List<int> playRowPairNumbers;
   final String idPartida;
   final String jugadores;
   final String leagueTitle;
@@ -668,6 +1126,8 @@ class _ScorecardCard extends StatelessWidget {
   final bool isLeagueRoundUpdating;
   final ValueChanged<String>? onLeagueRoundChanged;
   final String? loadError;
+  final String? pairBackendResponse;
+  final String? pairBackendUrl;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
   final int? selectedGuideRowPairIndex;
@@ -727,6 +1187,7 @@ class _ScorecardCard extends StatelessWidget {
               guideRows: guideRows,
               playRowValues: playRowValues,
               playRowLabels: playRowLabels,
+              playRowPairNumbers: playRowPairNumbers,
               onPlayValueChanged: onPlayValueChanged,
               selectedGuideRowPairIndex: selectedGuideRowPairIndex,
               onGuideRowPairToggled: onGuideRowPairToggled,
@@ -737,6 +1198,77 @@ class _ScorecardCard extends StatelessWidget {
               Text(
                 loadError!,
                 style: const TextStyle(color: Color(0xFF9D433D), fontSize: 13),
+              ),
+            ],
+            if (pairBackendResponse != null || pairBackendUrl != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF2E4),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF8FAF73)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (pairBackendUrl != null) ...[
+                      const Text(
+                        'URL establecerParejas',
+                        style: TextStyle(
+                          color: Color(0xFF235C3D),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        pairBackendUrl!,
+                        style: const TextStyle(
+                          color: Color(0xFF2F3933),
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            Clipboard.setData(
+                              ClipboardData(text: pairBackendUrl!),
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('URL copiada')),
+                            );
+                          },
+                          icon: const Icon(Icons.copy, size: 18),
+                          label: const Text('Copiar URL'),
+                        ),
+                      ),
+                    ],
+                    if (pairBackendResponse != null) ...[
+                      if (pairBackendUrl != null) const SizedBox(height: 12),
+                      const Text(
+                        'Respuesta cruda establecerParejas',
+                        style: TextStyle(
+                          color: Color(0xFF235C3D),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        pairBackendResponse!,
+                        style: const TextStyle(
+                          color: Color(0xFF2F3933),
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ],
             const SizedBox(height: 10),
@@ -909,6 +1441,7 @@ class _ScoreGrid extends StatelessWidget {
     required this.guideRows,
     required this.playRowValues,
     required this.playRowLabels,
+    required this.playRowPairNumbers,
     required this.onPlayValueChanged,
     required this.selectedGuideRowPairIndex,
     required this.onGuideRowPairToggled,
@@ -918,6 +1451,7 @@ class _ScoreGrid extends StatelessWidget {
   final List<_ScoreRowData> guideRows;
   final List<List<String>> playRowValues;
   final List<String> playRowLabels;
+  final List<int> playRowPairNumbers;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
   final int? selectedGuideRowPairIndex;
@@ -953,6 +1487,9 @@ class _ScoreGrid extends StatelessWidget {
             playerLabel: rowIndex < playRowLabels.length
                 ? playRowLabels[rowIndex]
                 : '${rowIndex + 1}',
+            pairNumber: rowIndex < playRowPairNumbers.length
+                ? playRowPairNumbers[rowIndex]
+                : 0,
             handicapValues: handicapValues,
             isEditable: isEditable,
             onValueChanged: onPlayValueChanged,
@@ -1087,6 +1624,7 @@ class _GridPlayRow extends StatelessWidget {
     required this.rowIndex,
     required this.values,
     required this.playerLabel,
+    required this.pairNumber,
     required this.handicapValues,
     required this.isEditable,
     required this.onValueChanged,
@@ -1096,6 +1634,7 @@ class _GridPlayRow extends StatelessWidget {
   final int rowIndex;
   final List<String> values;
   final String playerLabel;
+  final int pairNumber;
   final List<String> handicapValues;
   final bool isEditable;
   final void Function(int rowIndex, int holeIndex, String value) onValueChanged;
@@ -1116,6 +1655,7 @@ class _GridPlayRow extends StatelessWidget {
           _GridCell.data(
             width: GolfScorecardScreen._labelWidth,
             tone: tone,
+            decoration: _playerPairLabelDecoration(pairNumber),
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.symmetric(horizontal: 14),
             isLabel: true,
@@ -1234,6 +1774,89 @@ int? _guideRowPairIndexForLabel(String label) {
 
 String _normalizedGuideRowLabel(String label) {
   return label.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+}
+
+Map<int, int> _pairColorIndexesFromPairNumbers(List<int> pairNumbers) {
+  return {
+    for (final entry in pairNumbers.asMap().entries)
+      if (entry.value > 0) entry.key: entry.value - 1,
+  };
+}
+
+int _nextPairColorIndexFromPairNumbers(List<int> pairNumbers) {
+  return pairNumbers.fold(0, (maxPair, pairNumber) {
+    return pairNumber > maxPair ? pairNumber : maxPair;
+  });
+}
+
+List<int> _pairNumbersFromPairColorIndexes(
+  Map<int, int> pairColorIndexes,
+  int playerCount,
+) {
+  final colorIndexes = <int>{};
+  for (final colorIndex in pairColorIndexes.values) {
+    colorIndexes.add(colorIndex);
+  }
+  final orderedColorIndexes = colorIndexes.toList(growable: false)..sort();
+  final pairNumberByColorIndex = {
+    for (var index = 0; index < orderedColorIndexes.length; index++)
+      orderedColorIndexes[index]: index + 1,
+  };
+
+  return List.generate(playerCount, (rowIndex) {
+    final colorIndex = pairColorIndexes[rowIndex];
+    if (colorIndex == null) {
+      return 0;
+    }
+
+    return pairNumberByColorIndex[colorIndex] ?? 0;
+  }, growable: false);
+}
+
+List<int> _rowOrderByPairNumbers(List<int> pairNumbers) {
+  final rowOrder = List.generate(pairNumbers.length, (index) => index);
+  if (!pairNumbers.any((pairNumber) => pairNumber > 0)) {
+    return rowOrder;
+  }
+
+  rowOrder.sort((a, b) {
+    final aPair = pairNumbers[a];
+    final bPair = pairNumbers[b];
+    final aSortPair = aPair > 0 ? aPair : 1 << 30;
+    final bSortPair = bPair > 0 ? bPair : 1 << 30;
+    final pairComparison = aSortPair.compareTo(bSortPair);
+    return pairComparison == 0 ? a.compareTo(b) : pairComparison;
+  });
+  return rowOrder;
+}
+
+List<T> _reorderedList<T>(List<T> values, List<int> rowOrder) {
+  return [
+    for (final rowIndex in rowOrder)
+      if (rowIndex >= 0 && rowIndex < values.length) values[rowIndex],
+  ];
+}
+
+Color _pairColorForIndex(int index) {
+  final hue = (index * 67) % 360;
+  return HSLColor.fromAHSL(1, hue.toDouble(), 0.58, 0.84).toColor();
+}
+
+Color _pairBorderColorForIndex(int index) {
+  final hue = (index * 67) % 360;
+  return HSLColor.fromAHSL(1, hue.toDouble(), 0.54, 0.54).toColor();
+}
+
+BoxDecoration? _playerPairLabelDecoration(int pairNumber) {
+  if (pairNumber <= 0) {
+    return null;
+  }
+
+  final hue = ((pairNumber - 1) * 67) % 360;
+  return BoxDecoration(
+    color: HSLColor.fromAHSL(1, hue.toDouble(), 0.44, 0.92).toColor(),
+    border: Border.fromBorderSide(_borderSide),
+  );
 }
 
 String _holeValue(List<String> values, int holeIndex) {
@@ -1964,6 +2587,12 @@ List<String> _decodePlayRowModifiedValues(String rawJson) {
   ).map((row) => row.modified).toList(growable: false);
 }
 
+List<int> _decodePlayRowPairNumbers(String rawJson) {
+  return _decodePlayRowStates(
+    rawJson,
+  ).map((row) => row.pairNumber).toList(growable: false);
+}
+
 List<_DecodedPlayRow> _decodePlayRowStates(String rawJson) {
   final decoded = _decodePlayRowsList(rawJson);
   if (decoded == null) {
@@ -1979,6 +2608,7 @@ List<_DecodedPlayRow> _decodePlayRowStates(String rawJson) {
 
     final userId = '${row['idUsuario'] ?? row['idJugador'] ?? ''}'.trim();
     final rawPlayerLabel = '${row['jugador'] ?? ''}'.trim();
+    final pairNumber = _intFromJsonLikeValue(row['pareja']) ?? 0;
     final values = List.generate(18, (holeIndex) {
       final value = row['hoyo_${holeIndex + 1}'];
       return value == null ? '' : '$value';
@@ -2000,12 +2630,43 @@ List<_DecodedPlayRow> _decodePlayRowStates(String rawJson) {
             ? '${rows.length + 1}'
             : rawPlayerLabel,
         modified: '${row['modificado'] ?? ''}',
+        pairNumber: pairNumber,
         values: values,
       ),
     );
   }
 
-  return rows;
+  return _orderedDecodedPlayRows(rows);
+}
+
+int? _intFromJsonLikeValue(Object? value) {
+  if (value is int) {
+    return value;
+  }
+
+  if (value is num) {
+    return value.toInt();
+  }
+
+  return int.tryParse('${value ?? ''}'.trim());
+}
+
+List<_DecodedPlayRow> _orderedDecodedPlayRows(List<_DecodedPlayRow> rows) {
+  if (!rows.any((row) => row.pairNumber > 0)) {
+    return rows;
+  }
+
+  final indexedRows = rows.indexed.toList(growable: false);
+  indexedRows.sort((a, b) {
+    final aPair = a.$2.pairNumber;
+    final bPair = b.$2.pairNumber;
+    final aSortPair = aPair > 0 ? aPair : 1 << 30;
+    final bSortPair = bPair > 0 ? bPair : 1 << 30;
+    final pairComparison = aSortPair.compareTo(bSortPair);
+    return pairComparison == 0 ? a.$1.compareTo(b.$1) : pairComparison;
+  });
+
+  return [for (final indexedRow in indexedRows) indexedRow.$2];
 }
 
 bool _isPlaceholderPlayerLabel(String label, int rowIndex) {
@@ -2043,6 +2704,21 @@ Object? _decodeJsonLikePayload(String rawPayload) {
   }
 }
 
+bool _scorecardBackendResponseIsOk(String response) {
+  final trimmedResponse = response.trim();
+  if (trimmedResponse.toLowerCase() == 'ok') {
+    return true;
+  }
+
+  final decoded = _decodeJsonLikePayload(trimmedResponse);
+  if (decoded is Map) {
+    final value = decoded['rpta'] ?? decoded['rtpta'];
+    return '$value'.trim().toLowerCase() == 'ok';
+  }
+
+  return false;
+}
+
 String _formatModifiedTimestamp(DateTime dateTime) {
   String twoDigits(int value) => value.toString().padLeft(2, '0');
 
@@ -2059,12 +2735,14 @@ class _DecodedPlayRow {
     required this.userId,
     required this.playerLabel,
     required this.modified,
+    required this.pairNumber,
     required this.values,
   });
 
   final String userId;
   final String playerLabel;
   final String modified;
+  final int pairNumber;
   final List<String> values;
 }
 

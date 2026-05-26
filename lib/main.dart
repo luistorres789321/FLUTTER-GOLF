@@ -10479,16 +10479,25 @@ String _createPlayRowsJsonForPlayers(
       existingRowsByPlayerLabel[playerLabel] = row;
     }
   }
+  final orderedPlayers = _scorecardOrderedPlayers(
+    players,
+    existingRowsByPlayerId: existingRowsByPlayerId,
+    existingRowsByPlayerLabel: existingRowsByPlayerLabel,
+  );
 
-  final data = List.generate(players.length, (rowIndex) {
-    final player = players[rowIndex];
+  final data = List.generate(orderedPlayers.length, (rowIndex) {
+    final player = orderedPlayers[rowIndex];
     final existingRow =
         existingRowsByPlayerId[player.idJugador.trim()] ??
         existingRowsByPlayerLabel[player.displayName];
+    final pairNumber = player.hasParejaField
+        ? player.pareja
+        : _playRowPairNumber(existingRow);
     return <String, String>{
       if (player.idJugador.trim().isNotEmpty)
         'idUsuario': player.idJugador.trim(),
       'jugador': player.displayName,
+      if (pairNumber > 0) 'pareja': '$pairNumber',
       'modificado': '${existingRow?['modificado'] ?? ''}',
       for (var holeIndex = 0; holeIndex < 18; holeIndex++)
         'hoyo_${holeIndex + 1}':
@@ -10497,6 +10506,37 @@ String _createPlayRowsJsonForPlayers(
   });
 
   return jsonEncode(data);
+}
+
+List<_InvitedPlayer> _scorecardOrderedPlayers(
+  List<_InvitedPlayer> players, {
+  required Map<String, Map<String, dynamic>> existingRowsByPlayerId,
+  required Map<String, Map<String, dynamic>> existingRowsByPlayerLabel,
+}) {
+  int effectivePairNumber(_InvitedPlayer player) {
+    final existingRow =
+        existingRowsByPlayerId[player.idJugador.trim()] ??
+        existingRowsByPlayerLabel[player.displayName];
+    return player.hasParejaField
+        ? player.pareja
+        : _playRowPairNumber(existingRow);
+  }
+
+  if (!players.any((player) => effectivePairNumber(player) > 0)) {
+    return players;
+  }
+
+  final indexedPlayers = players.indexed.toList(growable: false);
+  indexedPlayers.sort((a, b) {
+    final aPair = effectivePairNumber(a.$2);
+    final bPair = effectivePairNumber(b.$2);
+    final aSortPair = aPair > 0 ? aPair : 1 << 30;
+    final bSortPair = bPair > 0 ? bPair : 1 << 30;
+    final pairComparison = aSortPair.compareTo(bSortPair);
+    return pairComparison == 0 ? a.$1.compareTo(b.$1) : pairComparison;
+  });
+
+  return [for (final indexedPlayer in indexedPlayers) indexedPlayer.$2];
 }
 
 String? _mergeNewerPlayRowsJson({
@@ -10535,9 +10575,20 @@ String? _mergeNewerPlayRowsJson({
 
     final remoteModified = _modifiedTimestampValue(remoteRow['modificado']);
     final currentModified = _modifiedTimestampValue(currentRow['modificado']);
+    final remotePair = _playRowPairNumber(remoteRow);
+    final currentPair = _playRowPairNumber(currentRow);
+    if (remotePair > 0 && currentPair <= 0) {
+      currentRow['pareja'] = '$remotePair';
+      hasChanges = true;
+      continue;
+    }
+
     if (!_jsonValuesAreEqual(currentRow, remoteRow) &&
         remoteModified > currentModified) {
-      mergedRows[index] = Map<String, dynamic>.from(remoteRow);
+      mergedRows[index] = _remotePlayRowPreservingLocalPair(
+        remoteRow: remoteRow,
+        currentRow: currentRow,
+      );
       hasChanges = true;
     }
   }
@@ -10695,6 +10746,24 @@ bool _playRowHasPlayerOrAnnotations(
   return false;
 }
 
+int _playRowPairNumber(Map<String, dynamic>? row) {
+  return _intFromBackendValue(row?['pareja']) ?? 0;
+}
+
+Map<String, dynamic> _remotePlayRowPreservingLocalPair({
+  required Map<String, dynamic> remoteRow,
+  required Map<String, dynamic> currentRow,
+}) {
+  final mergedRow = Map<String, dynamic>.from(remoteRow);
+  final remoteHasPair = remoteRow.containsKey('pareja');
+  final currentPair = _playRowPairNumber(currentRow);
+  if (!remoteHasPair && currentPair > 0) {
+    mergedRow['pareja'] = '$currentPair';
+  }
+
+  return mergedRow;
+}
+
 int _modifiedTimestampValue(Object? value) {
   return int.tryParse('${value ?? ''}') ?? -1;
 }
@@ -10790,11 +10859,15 @@ class _InvitedPlayer {
     required this.idJugador,
     required this.alias,
     required this.esCreador,
+    required this.pareja,
+    required this.hasParejaField,
   });
 
   final String idJugador;
   final String alias;
   final String esCreador;
+  final int pareja;
+  final bool hasParejaField;
 
   bool get isCreator => esCreador.toUpperCase() == 'S';
 
@@ -10811,6 +10884,8 @@ class _InvitedPlayer {
     final alias = '${map['allias'] ?? map['alias'] ?? map['Alias'] ?? ''}'
         .trim();
     final esCreador = '${map['es_creador'] ?? ''}'.trim();
+    final hasParejaField = map.containsKey('pareja');
+    final pareja = _intFromBackendValue(map['pareja']) ?? 0;
     if (idJugador.isEmpty && alias.isEmpty) {
       return null;
     }
@@ -10819,6 +10894,8 @@ class _InvitedPlayer {
       idJugador: idJugador,
       alias: alias,
       esCreador: esCreador,
+      pareja: pareja,
+      hasParejaField: hasParejaField,
     );
   }
 }

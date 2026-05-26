@@ -1986,6 +1986,125 @@ void main() {
     expect(find.text('Cancelar accion'), findsNothing);
   });
 
+  testWidgets('orders and colors scorecard players by backend pairs', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          playersResponseForGame: (_) {
+            return "[{'idJugador':'123','allias':'Auto','es_creador':'S','pareja':0},"
+                "{'idJugador':'999','allias':'Luis','es_creador':'N','pareja':2},"
+                "{'idJugador':'777','allias':'Marta','es_creador':'N','pareja':1},"
+                "{'idJugador':'666','allias':'Pau','es_creador':'N','pareja':1},"
+                "{'idJugador':'555','allias':'Ana','es_creador':'N','pareja':2}]";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pumpAndSettle();
+
+    final orderedLabels = ['Marta', 'Pau', 'Luis', 'Ana', 'Auto'];
+    final labelPositions = [
+      for (final label in orderedLabels) tester.getTopLeft(find.text(label)).dy,
+    ];
+    expect(labelPositions, orderedEquals(labelPositions.toList()..sort()));
+    expect(
+      _containerColorCount(tester, _testScorecardPairLabelColorForNumber(1)),
+      2,
+    );
+    expect(
+      _containerColorCount(tester, _testScorecardPairLabelColorForNumber(2)),
+      2,
+    );
+  });
+
+  testWidgets('keeps paired scorecard rows during stale polling refreshes', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requests = <Uri>[];
+    final staleRows = [
+      for (final player in const [
+        ('123', 'Auto'),
+        ('999', 'Luis'),
+        ('777', 'Marta'),
+      ])
+        {
+          'idUsuario': player.$1,
+          'jugador': player.$2,
+          'modificado': '991231235959',
+          for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+            'hoyo_${holeIndex + 1}': '',
+        },
+    ];
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          playersResponseForGame: (_) {
+            final gameStarted = requests.any(
+              (uri) => uri.queryParameters['accion'] == 'empezar_partida',
+            );
+            if (gameStarted) {
+              return "[{'idJugador':'123','allias':'Auto','es_creador':'S'},"
+                  "{'idJugador':'999','allias':'Luis','es_creador':'N'},"
+                  "{'idJugador':'777','allias':'Marta','es_creador':'N'}]";
+            }
+
+            return "[{'idJugador':'123','allias':'Auto','es_creador':'S','pareja':0},"
+                "{'idJugador':'999','allias':'Luis','es_creador':'N','pareja':1},"
+                "{'idJugador':'777','allias':'Marta','es_creador':'N','pareja':1}]";
+          },
+          playRowsResponseForGame: (_) => jsonEncode(staleRows),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Empezar la Partida'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Empezar la Partida'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Luis')).dy,
+      lessThan(tester.getTopLeft(find.text('Auto')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Marta')).dy,
+      lessThan(tester.getTopLeft(find.text('Auto')).dy),
+    );
+    expect(
+      _containerColorCount(tester, _testScorecardPairLabelColorForNumber(1)),
+      2,
+    );
+  });
+
   testWidgets('asks for league association before starting an active league game', (
     WidgetTester tester,
   ) async {
@@ -2497,6 +2616,158 @@ void main() {
     expect(find.text('handicap EPPA'), findsOneWidget);
     expect(find.text('metres BLANC'), findsOneWidget);
     expect(find.text('handicap BLANC'), findsOneWidget);
+  });
+
+  testWidgets('creates and reassigns scorecard pairs from the pair icon', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final requests = <Uri>[];
+
+    String playRowJson(String player) {
+      return jsonEncode({
+        'idUsuario': player,
+        'jugador': player,
+        'modificado': '',
+        for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+          'hoyo_${holeIndex + 1}': '',
+      });
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '3',
+          initialPlayRowsJson:
+              '[${playRowJson('Auto')},${playRowJson('Luis')},${playRowJson('Marta')}]',
+          datosServidorService: _existingFieldsService(
+            requests: requests,
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('scorecard_pair_icon')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Haz click sobre los jugadores, y pulsa Crear Pareja'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(TextButton, 'Cancelar'), findsOneWidget);
+    final autoInDialog = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('Auto'),
+    );
+    final luisInDialog = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('Luis'),
+    );
+    final martaInDialog = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('Marta'),
+    );
+    expect(autoInDialog, findsOneWidget);
+    expect(luisInDialog, findsOneWidget);
+    expect(martaInDialog, findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Crea Pareja'),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(autoInDialog);
+    await tester.pump();
+    await tester.tap(luisInDialog);
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Crea Pareja'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Crea Pareja'));
+    await tester.pumpAndSettle();
+
+    expect(_animatedContainerColorCount(_testPairColorForIndex(0)), 2);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Crea Pareja'),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(luisInDialog);
+    await tester.pump();
+    await tester.tap(martaInDialog);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Crea Pareja'));
+    await tester.pumpAndSettle();
+
+    expect(_animatedContainerColorCount(_testPairColorForIndex(0)), 0);
+    expect(_animatedContainerColorCount(_testPairColorForIndex(1)), 2);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Hecho'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Haz click sobre los jugadores, y pulsa Crear Pareja'),
+      findsNothing,
+    );
+    expect(find.text('Parejas creadas'), findsNothing);
+    expect(find.text('Respuesta backend'), findsNothing);
+    expect(find.text('URL establecerParejas'), findsOneWidget);
+    expect(find.textContaining('accion=establecer_parejas'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Copiar URL'), findsOneWidget);
+    expect(find.text('Respuesta cruda establecerParejas'), findsOneWidget);
+    expect(find.text('{"rtpta":"ok"}'), findsOneWidget);
+    expect(find.text('Jugadores: 3'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Luis')).dy,
+      lessThan(tester.getTopLeft(find.text('Auto')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Marta')).dy,
+      lessThan(tester.getTopLeft(find.text('Auto')).dy),
+    );
+    expect(
+      _containerColorCount(tester, _testScorecardPairLabelColorForNumber(1)),
+      2,
+    );
+
+    final establecerParejasUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'establecer_parejas',
+    );
+    expect(establecerParejasUri.queryParameters, {
+      'accion': 'establecer_parejas',
+      'json': '[{"pareja":1,"idUsuario1":"Luis","idUsuario2":"Marta"}]',
+      'idPartida': 'PARTIDA123',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getString('last_establecer_parejas_url'),
+      establecerParejasUri.toString(),
+    );
+    expect(
+      prefs.getString('last_establecer_parejas_response'),
+      '{"rtpta":"ok"}',
+    );
   });
 
   testWidgets(
@@ -3884,6 +4155,10 @@ DatosServidorService _existingFieldsService({
         return http.Response(invitaConMovilResponse, 200);
       }
 
+      if (accion == 'establecer_parejas') {
+        return http.Response('{"rtpta":"ok"}', 200);
+      }
+
       if (accion == 'crea_partida') {
         return http.Response(jsonEncode({'rpta': 'ok'}), 200);
       }
@@ -4056,6 +4331,29 @@ int _containerColorCount(WidgetTester tester, Color color) {
     final decoration = container.decoration;
     return decoration is BoxDecoration && decoration.color == color;
   }).length;
+}
+
+int _animatedContainerColorCount(Color color) {
+  return find
+      .byWidgetPredicate((widget) {
+        if (widget is! AnimatedContainer) {
+          return false;
+        }
+        final decoration = widget.decoration;
+        return decoration is BoxDecoration && decoration.color == color;
+      })
+      .evaluate()
+      .length;
+}
+
+Color _testPairColorForIndex(int index) {
+  final hue = (index * 67) % 360;
+  return HSLColor.fromAHSL(1, hue.toDouble(), 0.58, 0.84).toColor();
+}
+
+Color _testScorecardPairLabelColorForNumber(int pairNumber) {
+  final hue = ((pairNumber - 1) * 67) % 360;
+  return HSLColor.fromAHSL(1, hue.toDouble(), 0.44, 0.92).toColor();
 }
 
 Finder _horizontalScrollAncestorOfButton(String text) {

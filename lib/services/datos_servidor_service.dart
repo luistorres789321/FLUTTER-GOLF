@@ -62,6 +62,21 @@ class DatosServidorService {
     });
   }
 
+  Future<String> establecerParejas({
+    required String idPartida,
+    required String json,
+  }) {
+    return _getUriTexto(establecerParejasUri(idPartida: idPartida, json: json));
+  }
+
+  Uri establecerParejasUri({required String idPartida, required String json}) {
+    return _uri({
+      'accion': 'establecer_parejas',
+      'json': json,
+      'idPartida': idPartida,
+    });
+  }
+
   Future<String> aceptaInvitacion({
     required String idPartidaAnfitrion,
     required String idPartidaInvitado,
@@ -401,7 +416,14 @@ class DatosServidorService {
   }
 
   Future<String> _getTexto(Map<String, String> queryParameters) async {
-    final uri = endpoint.replace(queryParameters: queryParameters);
+    return _getUriTexto(_uri(queryParameters));
+  }
+
+  Uri _uri(Map<String, String> queryParameters) {
+    return endpoint.replace(queryParameters: queryParameters);
+  }
+
+  Future<String> _getUriTexto(Uri uri) async {
     final response = await _client
         .get(uri, headers: const {'Accept': 'text/plain'})
         .timeout(timeout);
