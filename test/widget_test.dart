@@ -1400,6 +1400,82 @@ void main() {
     );
   });
 
+  testWidgets('allows rotation in statistics and scorecard screens', (
+    WidgetTester tester,
+  ) async {
+    final platformCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (methodCall) async {
+        platformCalls.add(methodCall);
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          scorecardConfigurationResponse: _scorecardConfigurationResponse(
+            List.filled(18, 3),
+          ),
+          allGamesResponse: jsonEncode({
+            'partidas': [
+              {
+                'idPartida': 'STATS1',
+                'dia': '260505',
+                'json_partida': jsonEncode([
+                  {
+                    'idUsuario': '123',
+                    'jugador': 'Auto',
+                    'modificado': '',
+                    for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '4',
+                  },
+                ]),
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Estadisticas'));
+    await tester.tap(find.text('Estadisticas'));
+    await tester.pumpAndSettle();
+
+    expect(
+      platformCalls,
+      contains(
+        _orientationCallWith({'portraitUp', 'landscapeLeft', 'landscapeRight'}),
+      ),
+    );
+
+    await tester.tap(find.byIcon(Icons.visibility));
+    await tester.pumpAndSettle();
+
+    expect(
+      platformCalls,
+      contains(
+        _orientationCallWith({'portraitUp', 'landscapeLeft', 'landscapeRight'}),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Salir'));
+    await tester.pumpAndSettle();
+
+    expect(platformCalls, contains(_orientationCallWith({'portraitUp'})));
+  });
+
   testWidgets('uses round scorecard configuration for statistics difference', (
     WidgetTester tester,
   ) async {
@@ -2770,6 +2846,324 @@ void main() {
     );
   });
 
+  testWidgets('automatically pairs the last two unpaired scorecard players', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final requests = <Uri>[];
+
+    String playRowJson(String player) {
+      return jsonEncode({
+        'idUsuario': player,
+        'jugador': player,
+        'modificado': '',
+        for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+          'hoyo_${holeIndex + 1}': '',
+      });
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '4',
+          initialPlayRowsJson:
+              '[${playRowJson('Auto')},${playRowJson('Luis')},'
+              '${playRowJson('Marta')},${playRowJson('Pau')}]',
+          datosServidorService: _existingFieldsService(
+            requests: requests,
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('scorecard_pair_icon')));
+    await tester.pumpAndSettle();
+
+    final autoInDialog = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('Auto'),
+    );
+    final luisInDialog = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('Luis'),
+    );
+
+    await tester.tap(autoInDialog);
+    await tester.pump();
+    await tester.tap(luisInDialog);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Crea Pareja'));
+    await tester.pumpAndSettle();
+
+    expect(_animatedContainerColorCount(_testPairColorForIndex(0)), 2);
+    expect(_animatedContainerColorCount(_testPairColorForIndex(1)), 2);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Hecho'));
+    await tester.pumpAndSettle();
+
+    expect(
+      _containerColorCount(tester, _testScorecardPairLabelColorForNumber(1)),
+      2,
+    );
+    expect(
+      _containerColorCount(tester, _testScorecardPairLabelColorForNumber(2)),
+      2,
+    );
+
+    final establecerParejasUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'establecer_parejas',
+    );
+    expect(establecerParejasUri.queryParameters, {
+      'accion': 'establecer_parejas',
+      'json':
+          '[{"pareja":1,"idUsuario1":"Auto","idUsuario2":"Luis"},'
+          '{"pareja":2,"idUsuario1":"Marta","idUsuario2":"Pau"}]',
+      'idPartida': 'PARTIDA123',
+    });
+  });
+
+  testWidgets('opens scorecard fullscreen in forced landscape', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final platformCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (methodCall) async {
+        platformCalls.add(methodCall);
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+
+    String playRowJson(String player) {
+      return jsonEncode({
+        'idUsuario': player,
+        'jugador': player,
+        'modificado': '',
+        for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+          'hoyo_${holeIndex + 1}': '',
+      });
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '2',
+          initialPlayRowsJson:
+              '[${playRowJson('Auto')},${playRowJson('Luis')}]',
+          datosServidorService: _existingFieldsService(
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('scorecard_fullscreen_icon')));
+    await tester.pumpAndSettle();
+
+    expect(
+      platformCalls,
+      contains(_orientationCallWith({'landscapeLeft', 'landscapeRight'})),
+    );
+    expect(
+      find.byKey(const ValueKey('scorecard_fullscreen_exit_icon')),
+      findsOneWidget,
+    );
+    expect(find.text('Auto'), findsOneWidget);
+    expect(find.text('Luis'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('scorecard_fullscreen_exit_icon')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      platformCalls,
+      contains(
+        _orientationCallWith({'portraitUp', 'landscapeLeft', 'landscapeRight'}),
+      ),
+    );
+    expect(
+      find.byKey(const ValueKey('scorecard_fullscreen_exit_icon')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'shows finish game button only when every player hole is filled',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      var finishCalls = 0;
+
+      String playRowJson(String player, {required bool complete}) {
+        return jsonEncode({
+          'idUsuario': player,
+          'jugador': player,
+          'modificado': '',
+          for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+            'hoyo_${holeIndex + 1}': complete || holeIndex < 17
+                ? '${holeIndex + 1}'
+                : '',
+        });
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GolfScorecardScreen(
+            idPartida: 'PARTIDA123',
+            jugadores: '2',
+            initialPlayRowsJson:
+                '[${playRowJson('Auto', complete: true)},'
+                '${playRowJson('Luis', complete: false)}]',
+            datosServidorService: _existingFieldsService(
+              scorecardConfigurationResponse: _scorecardConfigurationResponse(
+                List.filled(18, 3),
+              ),
+            ),
+            onExit: () {},
+            onLeaveGame: () async {},
+            onDestroyGame: () async {},
+            onFinishGame: () async {
+              finishCalls++;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Terminar'), findsNothing);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GolfScorecardScreen(
+            idPartida: 'PARTIDA123',
+            jugadores: '2',
+            initialPlayRowsJson:
+                '[${playRowJson('Auto', complete: true)},'
+                '${playRowJson('Luis', complete: true)}]',
+            datosServidorService: _existingFieldsService(
+              scorecardConfigurationResponse: _scorecardConfigurationResponse(
+                List.filled(18, 3),
+              ),
+            ),
+            onExit: () {},
+            onLeaveGame: () async {},
+            onDestroyGame: () async {},
+            onFinishGame: () async {
+              finishCalls++;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Terminar'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('scorecard_finish_game_button')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('scorecard_finish_game_button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(finishCalls, 1);
+    },
+  );
+
+  testWidgets('finishes game by clearing local session and returning home', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    final savedRowsJson = jsonEncode([
+      {
+        'idUsuario': '123',
+        'jugador': 'Auto',
+        'modificado': _backendTimestampForToday(hour: 12, minute: 44),
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '4',
+      },
+      {
+        'idUsuario': '999',
+        'jugador': 'Luis',
+        'modificado': _backendTimestampForToday(hour: 12, minute: 44),
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '5',
+      },
+    ]);
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': idPartida,
+      'saved_players': '2',
+      'saved_game_rows_json': savedRowsJson,
+      'saved_game_league_title': 'Liga',
+      'saved_game_league_round': '3',
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          playersResponseForGame: (_) {
+            return "{'empezada':'${_backendTimestampForToday(hour: 12, minute: 43)}','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    expect(find.text('Terminar'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('scorecard_finish_game_button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tarjeta de golf'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsNothing);
+    expect(
+      find.widgetWithText(OutlinedButton, 'Iniciar Salida'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('idPartida: $idPartida'), findsNothing);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('saved_game_id'), isNull);
+    expect(prefs.getString('saved_players'), isNull);
+    expect(prefs.getString('saved_game_rows_json'), isNull);
+    expect(prefs.getString('saved_game_league_title'), isNull);
+    expect(prefs.getString('saved_game_league_round'), isNull);
+    expect(prefs.getString('invitation_game_id'), isNull);
+  });
+
   testWidgets(
     'opens scorecard when start request fails but backend started game',
     (WidgetTester tester) async {
@@ -3202,6 +3596,63 @@ void main() {
       ),
       isEmpty,
     );
+  });
+
+  testWidgets('reopens started scorecard preserving saved hole annotations', (
+    WidgetTester tester,
+  ) async {
+    const idPartida = 'PARTIDA123';
+    final savedRowsJson = jsonEncode([
+      {
+        'idUsuario': '123',
+        'jugador': 'Auto',
+        'modificado': _backendTimestampForToday(hour: 12, minute: 44),
+        'hoyo_1': '5',
+        for (var hole = 2; hole <= 18; hole++) 'hoyo_$hole': '',
+      },
+      {
+        'idUsuario': '999',
+        'jugador': 'Luis',
+        'modificado': '',
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '',
+      },
+    ]);
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+      'saved_game_id': idPartida,
+      'saved_field_id': '1',
+      'saved_players': '2',
+      'saved_game_rows_json': savedRowsJson,
+      'invitation_game_id': idPartida,
+      'invitation_game_created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          playersResponseForGame: (_) {
+            return "{'empezada':'${_backendTimestampForToday(hour: 12, minute: 43)}','jugadores':["
+                "{'idUsuario':'123','Alias':'Auto','es_creador':'S'},"
+                "{'idUsuario':'999','Alias':'Luis','es_creador':'N'}]}";
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Iniciar Salida'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(OutlinedButton, 'Salir'), findsOneWidget);
+    final firstScoreField = tester.widget<TextField>(
+      find.byType(TextField).first,
+    );
+    expect(firstScoreField.controller?.text, '5');
+
+    final prefs = await SharedPreferences.getInstance();
+    final rows = jsonDecode(prefs.getString('saved_game_rows_json')!) as List;
+    expect(rows.first, containsPair('hoyo_1', '5'));
   });
 
   testWidgets('loads initial state without showing pending games button', (
@@ -4354,6 +4805,27 @@ Color _testPairColorForIndex(int index) {
 Color _testScorecardPairLabelColorForNumber(int pairNumber) {
   final hue = ((pairNumber - 1) * 67) % 360;
   return HSLColor.fromAHSL(1, hue.toDouble(), 0.44, 0.92).toColor();
+}
+
+Matcher _orientationCallWith(Set<String> orientationNames) {
+  return isA<MethodCall>()
+      .having(
+        (call) => call.method,
+        'method',
+        'SystemChrome.setPreferredOrientations',
+      )
+      .having(
+        (call) {
+          final arguments = call.arguments;
+          if (arguments is! List) {
+            return const <String>{};
+          }
+
+          return {for (final value in arguments) '$value'.split('.').last};
+        },
+        'orientations',
+        orientationNames,
+      );
 }
 
 Finder _horizontalScrollAncestorOfButton(String text) {

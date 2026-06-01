@@ -28,6 +28,14 @@ const _firebaseMessagingTokenStatusLegacyPending = 'no enviado';
 const _firebaseMessagingTokenStatusLegacySent = 'enviado';
 const _firebaseMessagingApnsTokenPollDelay = Duration(milliseconds: 500);
 const _firebaseMessagingApnsTokenPollAttempts = 20;
+const List<DeviceOrientation> _portraitOrientations = [
+  DeviceOrientation.portraitUp,
+];
+const List<DeviceOrientation> _statisticsOrientations = [
+  DeviceOrientation.portraitUp,
+  DeviceOrientation.landscapeLeft,
+  DeviceOrientation.landscapeRight,
+];
 bool _isSendingFirebaseMessagingToken = false;
 
 Future<void> main() async {
@@ -40,8 +48,16 @@ Future<void> main() async {
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
     unawaited(_configureFirebaseMessaging());
   }
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  await _lockPortraitOrientation();
   runApp(const GolfScorecardApp());
+}
+
+Future<void> _lockPortraitOrientation() {
+  return SystemChrome.setPreferredOrientations(_portraitOrientations);
+}
+
+Future<void> _allowStatisticsOrientations() {
+  return SystemChrome.setPreferredOrientations(_statisticsOrientations);
 }
 
 Future<String> _ensureDeviceId() async {
@@ -774,6 +790,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
           generateIdPartida: _generateGameId,
           onInvitationGameCreated: _storeInvitationGameId,
           onInvitationAccepted: _saveAcceptedInvitationGameId,
+          loadSavedPlayRowsJson: _loadSavedPlayRowsJsonForGame,
           loadSavedLeagueInfo: _loadSavedLeagueInfoForGame,
         ),
       ),
@@ -1327,6 +1344,38 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _finishCurrentGameLocally() async {
+    final session = _activeSession;
+    if (session == null) {
+      return;
+    }
+
+    _stopJsonHoyosPolling();
+    final prefs = await SharedPreferences.getInstance();
+    if (!_isCurrentSession(session)) {
+      return;
+    }
+
+    await prefs.remove(_savedGameIdKey);
+    await prefs.remove(_savedPlayersKey);
+    await prefs.remove(_savedGameRowsKey);
+    await prefs.remove(_savedGameLeagueTitleKey);
+    await prefs.remove(_savedGameLeagueRoundKey);
+    await _clearInvitationGameId(prefs);
+
+    if (!mounted || !_isCurrentSession(session)) {
+      return;
+    }
+
+    setState(() {
+      _savedGameId = null;
+      _activeSession = null;
+      _differentRemotePlayRowsJson = null;
+      _creationError = null;
+      _initialGameState = const _InitialGameState();
+    });
+  }
+
   Future<void> _saveSessionLocallyIfCurrent(
     _GameSession requestedSession,
     _GameSession refreshedSession,
@@ -1408,6 +1457,22 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     );
   }
 
+  Future<String?> _loadSavedPlayRowsJsonForGame(String idPartida) async {
+    final requestedGameId = idPartida.trim();
+    if (requestedGameId.isEmpty) {
+      return null;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedGameId = prefs.getString(_savedGameIdKey)?.trim() ?? '';
+    if (savedGameId != requestedGameId) {
+      return null;
+    }
+
+    final playRowsJson = prefs.getString(_savedGameRowsKey)?.trim();
+    return playRowsJson == null || playRowsJson.isEmpty ? null : playRowsJson;
+  }
+
   void _exitActiveSession() {
     if (_activeSession == null) {
       return;
@@ -1441,6 +1506,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         onPlayRowsJsonChanged: _savePlayRowsJson,
         onLeaveGame: _leaveCurrentUserGame,
         onDestroyGame: _destroyCurrentGame,
+        onFinishGame: _finishCurrentGameLocally,
         onExit: _exitActiveSession,
       );
     }
@@ -1983,7 +2049,14 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(_allowStatisticsOrientations());
     unawaited(_loadStatistics());
+  }
+
+  @override
+  void dispose() {
+    unawaited(_lockPortraitOrientation());
+    super.dispose();
   }
 
   Future<void> _loadStatistics() async {
@@ -2031,8 +2104,8 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
     }
   }
 
-  void _openRoundScorecard(_StatisticsRound round) {
-    Navigator.of(context).push(
+  Future<void> _openRoundScorecard(_StatisticsRound round) async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => GolfScorecardScreen(
           idPartida: round.idPartida.isEmpty
@@ -2050,6 +2123,9 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
         ),
       ),
     );
+    if (mounted) {
+      unawaited(_allowStatisticsOrientations());
+    }
   }
 
   @override
@@ -2779,6 +2855,7 @@ class _InvitePlayersScreen extends StatefulWidget {
     required this.generateIdPartida,
     required this.onInvitationGameCreated,
     required this.onInvitationAccepted,
+    required this.loadSavedPlayRowsJson,
     required this.loadSavedLeagueInfo,
   });
 
@@ -2789,6 +2866,7 @@ class _InvitePlayersScreen extends StatefulWidget {
   final String Function() generateIdPartida;
   final Future<void> Function(String idPartida) onInvitationGameCreated;
   final Future<void> Function(String idPartida) onInvitationAccepted;
+  final Future<String?> Function(String idPartida) loadSavedPlayRowsJson;
   final Future<_GameLeagueInfo?> Function(String idPartida) loadSavedLeagueInfo;
 
   @override
@@ -3169,6 +3247,7 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
     required List<_InvitedPlayer> players,
     _GameLeagueInfo? leagueInfo,
   }) async {
+    final existingRows = await _loadExistingPlayRowsForGame(idPartida);
     final resolvedLeagueInfo =
         leagueInfo ??
         await _leagueInfoForAssociatedGame(idPartida) ??
@@ -3183,12 +3262,45 @@ class _InvitePlayersScreenState extends State<_InvitePlayersScreen> {
         idPartida: idPartida,
         idCampo: widget.fieldId,
         jugadores: players.length.toString(),
-        playRowsJson: _createPlayRowsJsonForPlayers(players),
+        playRowsJson: _createPlayRowsJsonForPlayers(
+          players,
+          existingRows: existingRows,
+        ),
         leagueTitle: resolvedLeagueInfo?.title ?? '',
         leagueRound: resolvedLeagueInfo?.round ?? '',
         leagueRoundOptions: resolvedLeagueInfo?.roundOptions ?? const [],
       ),
     );
+  }
+
+  Future<List<Map<String, dynamic>>> _loadExistingPlayRowsForGame(
+    String idPartida,
+  ) async {
+    final savedPlayRowsJson = await widget.loadSavedPlayRowsJson(idPartida);
+    String? existingPlayRowsJson = savedPlayRowsJson;
+
+    try {
+      final remoteResponse = await widget.datosServidorService.obtenerJsonHoyos(
+        widget.fieldId,
+        idPartida,
+      );
+      final remoteRows = _decodePlayRowsPayload(remoteResponse);
+      if (remoteRows != null) {
+        existingPlayRowsJson =
+            savedPlayRowsJson == null || savedPlayRowsJson.trim().isEmpty
+            ? jsonEncode(remoteRows)
+            : _mergeNewerPlayRowsJson(
+                    currentJson: savedPlayRowsJson,
+                    remoteResponse: remoteResponse,
+                  ) ??
+                  savedPlayRowsJson;
+      }
+    } catch (error) {
+      debugPrint('obtenerJsonHoyos($idPartida) al abrir tarjeta fallo: $error');
+    }
+
+    return _decodePlayRowsPayload(existingPlayRowsJson) ??
+        const <Map<String, dynamic>>[];
   }
 
   Future<_GameLeagueInfo?> _leagueInfoForAssociatedGame(

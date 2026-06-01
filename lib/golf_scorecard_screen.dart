@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -10,6 +11,37 @@ const _frontNine = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const _backNine = [10, 11, 12, 13, 14, 15, 16, 17, 18];
 const _summaryHeaders = ['TOTAL', 'HCP JUEGO', 'NETO'];
 const _emptySummary = ['', '', ''];
+const List<DeviceOrientation> _scorecardOrientations = [
+  DeviceOrientation.portraitUp,
+  DeviceOrientation.landscapeLeft,
+  DeviceOrientation.landscapeRight,
+];
+const List<DeviceOrientation> _scorecardLandscapeOrientations = [
+  DeviceOrientation.landscapeLeft,
+  DeviceOrientation.landscapeRight,
+];
+const List<DeviceOrientation> _scorecardPortraitOrientations = [
+  DeviceOrientation.portraitUp,
+];
+
+Future<void> _allowScorecardOrientations() {
+  return SystemChrome.setPreferredOrientations(_scorecardOrientations);
+}
+
+Future<void> _forceScorecardLandscapeOrientation() {
+  return SystemChrome.setPreferredOrientations(_scorecardLandscapeOrientations);
+}
+
+Future<void> _lockScorecardPortraitOrientation() {
+  return SystemChrome.setPreferredOrientations(_scorecardPortraitOrientations);
+}
+
+Future<void> _showSystemUi() {
+  return SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: SystemUiOverlay.values,
+  );
+}
 
 const _playRowTemplate = _ScoreRowData(
   label: '',
@@ -33,6 +65,7 @@ class GolfScorecardScreen extends StatefulWidget {
     this.datosServidorService,
     this.onPlayRowsJsonChanged,
     this.onLeagueRoundChanged,
+    this.onFinishGame,
     this.isReadOnly = false,
     this.leagueTitle = '',
     this.leagueRound = '',
@@ -64,6 +97,7 @@ class GolfScorecardScreen extends StatefulWidget {
   final DatosServidorService? datosServidorService;
   final ValueChanged<String>? onPlayRowsJsonChanged;
   final Future<void> Function(String leagueRound)? onLeagueRoundChanged;
+  final Future<void> Function()? onFinishGame;
   final VoidCallback onExit;
   final Future<void> Function() onLeaveGame;
   final Future<void> Function() onDestroyGame;
@@ -95,11 +129,13 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   int? _selectedGuideRowPairIndex;
   bool _isLeavingGame = false;
   bool _isDestroyingGame = false;
+  bool _isFinishingGame = false;
   bool _isUpdatingLeagueRound = false;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_allowScorecardOrientations());
     _ownsDatosServidorService = widget.datosServidorService == null;
     _datosServidorService =
         widget.datosServidorService ?? DatosServidorService();
@@ -152,6 +188,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
   @override
   void dispose() {
+    unawaited(_lockScorecardPortraitOrientation());
     if (_ownsDatosServidorService) {
       _datosServidorService.close();
     }
@@ -279,6 +316,44 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     }
   }
 
+  Future<void> _finishGame() async {
+    final onFinishGame = widget.onFinishGame;
+    if (onFinishGame == null || _isFinishingGame) {
+      return;
+    }
+
+    setState(() {
+      _isFinishingGame = true;
+      _loadError = null;
+    });
+
+    try {
+      await onFinishGame();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = null;
+      });
+    } catch (error) {
+      debugPrint('terminar partida local error: $error');
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loadError = 'No se pudo terminar la partida.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFinishingGame = false;
+        });
+      }
+    }
+  }
+
   Future<bool?> _showScorecardConfirmationDialog({
     required String message,
     required String confirmLabel,
@@ -369,6 +444,40 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
         _pairBackendResponse = 'ERROR: $error';
         _pairBackendUrl = pairBackendUrl;
       });
+    }
+  }
+
+  Future<void> _openFullscreenScorecard() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (context) => _FullscreenScorecardScreen(
+          guideRows: _guideRows,
+          playRowValues: _playRowValues,
+          playRowLabels: _playRowPlayerLabels,
+          playRowPairNumbers: _playRowPairNumbers,
+          idPartida: widget.idPartida,
+          jugadores: widget.jugadores,
+          leagueTitle: widget.leagueTitle,
+          leagueRound: _leagueRoundOverride ?? widget.leagueRound,
+          leagueRoundOptions: widget.leagueRoundOptions,
+          leagueRoundError: _leagueRoundError,
+          isLeagueRoundUpdating: _isUpdatingLeagueRound,
+          onLeagueRoundChanged: widget.onLeagueRoundChanged == null
+              ? null
+              : _updateLeagueRound,
+          loadError: _loadError,
+          onPlayValueChanged: _updatePlayValue,
+          selectedGuideRowPairIndex: _selectedGuideRowPairIndex,
+          onGuideRowPairToggled: _toggleGuideRowPair,
+          isEditable: !widget.isReadOnly,
+        ),
+      ),
+    );
+
+    if (mounted) {
+      unawaited(_allowScorecardOrientations());
+      unawaited(_showSystemUi());
     }
   }
 
@@ -567,6 +676,10 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   Widget build(BuildContext context) {
     final canLeaveGame =
         !widget.isReadOnly && _playRowValues.length > 1 && !_isLeavingGame;
+    final canFinishGame =
+        !widget.isReadOnly &&
+        widget.onFinishGame != null &&
+        _allPlayerHoleValuesAreComplete(_playRowValues);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -647,7 +760,19 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                   icon: const Icon(Icons.arrow_back),
                                   label: const Text('Salir'),
                                 ),
+                                if (canFinishGame) ...[
+                                  const SizedBox(width: 10),
+                                  _FinishGameButton(
+                                    onPressed: _isFinishingGame
+                                        ? null
+                                        : _finishGame,
+                                  ),
+                                ],
                                 const Spacer(),
+                                _FullscreenScorecardIcon(
+                                  onPressed: _openFullscreenScorecard,
+                                ),
+                                const SizedBox(width: 10),
                                 _PairPlayersIcon(onPressed: _openPairDialog),
                               ],
                             ),
@@ -803,6 +928,58 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   }
 }
 
+class _FullscreenScorecardIcon extends StatelessWidget {
+  const _FullscreenScorecardIcon({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Pantalla completa',
+      child: IconButton.filledTonal(
+        key: const ValueKey('scorecard_fullscreen_icon'),
+        onPressed: onPressed,
+        icon: const Icon(Icons.fullscreen),
+        color: const Color(0xFFF6F2EA),
+        style: IconButton.styleFrom(
+          backgroundColor: const Color.fromRGBO(246, 242, 234, 0.18),
+          fixedSize: const Size(48, 48),
+          side: const BorderSide(color: Color.fromRGBO(246, 242, 234, 0.70)),
+        ),
+      ),
+    );
+  }
+}
+
+class _FinishGameButton extends StatelessWidget {
+  const _FinishGameButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      key: const ValueKey('scorecard_finish_game_button'),
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        foregroundColor: const Color(0xFFFFF8F4),
+        backgroundColor: const Color(0xFF9D433D),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: const Icon(Icons.flag, size: 18),
+      label: const Text(
+        'Terminar',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+      ),
+    );
+  }
+}
+
 class _PairPlayersIcon extends StatelessWidget {
   const _PairPlayersIcon({required this.onPressed});
 
@@ -869,6 +1046,7 @@ class _PairPlayersDialogState extends State<_PairPlayersDialog> {
     super.initState();
     _pairColorIndexes = Map<int, int>.of(widget.pairColorIndexes);
     _nextPairColorIndex = widget.nextPairColorIndex;
+    _pairRemainingPlayersIfExactlyTwo();
   }
 
   void _togglePlayer(int rowIndex) {
@@ -906,7 +1084,26 @@ class _PairPlayersDialogState extends State<_PairPlayersDialog> {
         _pairColorIndexes[rowIndex] = pairColorIndex;
       }
       _selectedRowIndexes.clear();
+      _pairRemainingPlayersIfExactlyTwo();
     });
+  }
+
+  void _pairRemainingPlayersIfExactlyTwo() {
+    final unpairedPlayers = [
+      for (final player in widget.players)
+        if (!_pairColorIndexes.containsKey(player.rowIndex)) player,
+    ];
+    if (unpairedPlayers.length != 2) {
+      return;
+    }
+
+    final pairColorIndex = _nextPairColorIndex++;
+    for (final player in unpairedPlayers) {
+      _pairColorIndexes[player.rowIndex] = pairColorIndex;
+    }
+    _selectedRowIndexes.removeWhere(
+      (rowIndex) => _pairColorIndexes.containsKey(rowIndex),
+    );
   }
 
   void _finish() {
@@ -1090,6 +1287,181 @@ class _PairDialogResult {
   final Map<int, int> pairColorIndexes;
 }
 
+class _FullscreenScorecardScreen extends StatefulWidget {
+  const _FullscreenScorecardScreen({
+    required this.guideRows,
+    required this.playRowValues,
+    required this.playRowLabels,
+    required this.playRowPairNumbers,
+    required this.idPartida,
+    required this.jugadores,
+    required this.leagueTitle,
+    required this.leagueRound,
+    required this.leagueRoundOptions,
+    required this.leagueRoundError,
+    required this.isLeagueRoundUpdating,
+    required this.onLeagueRoundChanged,
+    required this.loadError,
+    required this.onPlayValueChanged,
+    required this.selectedGuideRowPairIndex,
+    required this.onGuideRowPairToggled,
+    required this.isEditable,
+  });
+
+  final List<_ScoreRowData> guideRows;
+  final List<List<String>> playRowValues;
+  final List<String> playRowLabels;
+  final List<int> playRowPairNumbers;
+  final String idPartida;
+  final String jugadores;
+  final String leagueTitle;
+  final String leagueRound;
+  final List<int> leagueRoundOptions;
+  final String? leagueRoundError;
+  final bool isLeagueRoundUpdating;
+  final FutureOr<void> Function(String)? onLeagueRoundChanged;
+  final String? loadError;
+  final void Function(int rowIndex, int holeIndex, String value)
+  onPlayValueChanged;
+  final int? selectedGuideRowPairIndex;
+  final ValueChanged<int> onGuideRowPairToggled;
+  final bool isEditable;
+
+  @override
+  State<_FullscreenScorecardScreen> createState() =>
+      _FullscreenScorecardScreenState();
+}
+
+class _FullscreenScorecardScreenState
+    extends State<_FullscreenScorecardScreen> {
+  late int? _selectedGuideRowPairIndex;
+  late String _leagueRound;
+  bool _isLeagueRoundUpdating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedGuideRowPairIndex = widget.selectedGuideRowPairIndex;
+    _leagueRound = widget.leagueRound;
+    _isLeagueRoundUpdating = widget.isLeagueRoundUpdating;
+    unawaited(_forceScorecardLandscapeOrientation());
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
+    );
+  }
+
+  @override
+  void dispose() {
+    unawaited(_allowScorecardOrientations());
+    unawaited(_showSystemUi());
+    super.dispose();
+  }
+
+  void _updatePlayValue(int rowIndex, int holeIndex, String value) {
+    widget.onPlayValueChanged(rowIndex, holeIndex, value);
+    setState(() {});
+  }
+
+  void _toggleGuideRowPair(int pairIndex) {
+    widget.onGuideRowPairToggled(pairIndex);
+    setState(() {
+      _selectedGuideRowPairIndex = _selectedGuideRowPairIndex == null
+          ? pairIndex
+          : null;
+    });
+  }
+
+  Future<void> _changeLeagueRound(String value) async {
+    final onLeagueRoundChanged = widget.onLeagueRoundChanged;
+    if (onLeagueRoundChanged == null || _isLeagueRoundUpdating) {
+      return;
+    }
+
+    setState(() {
+      _isLeagueRoundUpdating = true;
+    });
+
+    try {
+      await onLeagueRoundChanged(value);
+      if (mounted) {
+        setState(() {
+          _leagueRound = value;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLeagueRoundUpdating = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF071911),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: SafeArea(
+              minimum: const EdgeInsets.all(8),
+              child: Center(
+                child: FittedBox(
+                  fit: BoxFit.contain,
+                  child: SizedBox(
+                    width: GolfScorecardScreen.scorecardWidth,
+                    child: _ScorecardCard(
+                      guideRows: widget.guideRows,
+                      playRowValues: widget.playRowValues,
+                      playRowLabels: widget.playRowLabels,
+                      playRowPairNumbers: widget.playRowPairNumbers,
+                      idPartida: widget.idPartida,
+                      jugadores: widget.jugadores,
+                      leagueTitle: widget.leagueTitle,
+                      leagueRound: _leagueRound,
+                      leagueRoundOptions: widget.leagueRoundOptions,
+                      leagueRoundError: widget.leagueRoundError,
+                      isLeagueRoundUpdating: _isLeagueRoundUpdating,
+                      onLeagueRoundChanged: widget.onLeagueRoundChanged == null
+                          ? null
+                          : _changeLeagueRound,
+                      loadError: widget.loadError,
+                      pairBackendResponse: null,
+                      pairBackendUrl: null,
+                      onPlayValueChanged: _updatePlayValue,
+                      selectedGuideRowPairIndex: _selectedGuideRowPairIndex,
+                      onGuideRowPairToggled: _toggleGuideRowPair,
+                      isEditable: widget.isEditable,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 10,
+            left: 10,
+            child: SafeArea(
+              child: IconButton.filled(
+                key: const ValueKey('scorecard_fullscreen_exit_icon'),
+                onPressed: () => Navigator.of(context).pop(),
+                tooltip: 'Salir de pantalla completa',
+                icon: const Icon(Icons.close_fullscreen),
+                color: const Color(0xFFF6F2EA),
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color.fromRGBO(7, 25, 17, 0.76),
+                  fixedSize: const Size(48, 48),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ScorecardCard extends StatelessWidget {
   const _ScorecardCard({
     required this.guideRows,
@@ -1124,7 +1496,7 @@ class _ScorecardCard extends StatelessWidget {
   final List<int> leagueRoundOptions;
   final String? leagueRoundError;
   final bool isLeagueRoundUpdating;
-  final ValueChanged<String>? onLeagueRoundChanged;
+  final FutureOr<void> Function(String)? onLeagueRoundChanged;
   final String? loadError;
   final String? pairBackendResponse;
   final String? pairBackendUrl;
@@ -2671,6 +3043,18 @@ List<_DecodedPlayRow> _orderedDecodedPlayRows(List<_DecodedPlayRow> rows) {
 
 bool _isPlaceholderPlayerLabel(String label, int rowIndex) {
   return label.trim() == '${rowIndex + 1}';
+}
+
+bool _allPlayerHoleValuesAreComplete(List<List<String>> playRowValues) {
+  if (playRowValues.isEmpty) {
+    return false;
+  }
+
+  return playRowValues.every((values) {
+    return _normalizedPlayValues(
+      values,
+    ).every((value) => value.trim().isNotEmpty);
+  });
 }
 
 List<String> _normalizedPlayValues(List<String> values) {
