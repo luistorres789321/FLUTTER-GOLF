@@ -2644,6 +2644,64 @@ void main() {
     );
   });
 
+  testWidgets('keeps scorecard player column fixed during horizontal scroll', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+
+    String playRowJson(String player, List<String> values) {
+      return jsonEncode({
+        'idUsuario': player,
+        'jugador': player,
+        'modificado': '',
+        for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+          'hoyo_${holeIndex + 1}': values[holeIndex],
+      });
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '2',
+          initialPlayRowsJson:
+              '[${playRowJson('Auto', List.filled(18, '4'))},'
+              '${playRowJson('Luis', List.filled(18, '5'))}]',
+          datosServidorService: _existingFieldsService(
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final initialPlayerLabelLeft = tester.getTopLeft(find.text('Auto')).dx;
+    final initialFirstScoreLeft = tester
+        .getTopLeft(find.byType(TextField).first)
+        .dx;
+    final horizontalScrollViews = find.byWidgetPredicate((widget) {
+      return widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal;
+    });
+
+    await tester.drag(horizontalScrollViews.first, const Offset(-360, 0));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Auto')).dx,
+      closeTo(initialPlayerLabelLeft, 0.1),
+    );
+    expect(
+      tester.getTopLeft(find.byType(TextField).first).dx,
+      lessThan(initialFirstScoreLeft - 100),
+    );
+  });
+
   testWidgets('toggles scorecard information rows from the label column', (
     WidgetTester tester,
   ) async {

@@ -86,9 +86,10 @@ class GolfScorecardScreen extends StatefulWidget {
       (_subtotalWidth * 2) +
       _foldWidth +
       (_summaryWidth * 3);
+  static const double scorecardScrollableContentWidth =
+      scorecardContentWidth - _labelWidth;
   static const double scorecardWidth =
       scorecardContentWidth + _cardHorizontalPadding + _cardBorderWidth;
-  static const double _cardMinWidth = scorecardWidth;
   static const double _cardMaxWidth = 1560;
   final String idPartida;
   final String jugadores;
@@ -119,6 +120,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late List<String> _playRowPlayerLabels;
   late List<String> _playRowModifiedValues;
   late List<int> _playRowPairNumbers;
+  late final ScrollController _scorecardHorizontalScrollController;
+  late final ScrollController _markerHorizontalScrollController;
   Map<int, int> _playerPairColorIndexes = const {};
   int _nextPairColorIndex = 0;
   String? _leagueRoundOverride;
@@ -131,11 +134,20 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   bool _isDestroyingGame = false;
   bool _isFinishingGame = false;
   bool _isUpdatingLeagueRound = false;
+  bool _isSyncingHorizontalScroll = false;
 
   @override
   void initState() {
     super.initState();
     unawaited(_allowScorecardOrientations());
+    _scorecardHorizontalScrollController = ScrollController();
+    _markerHorizontalScrollController = ScrollController();
+    _scorecardHorizontalScrollController.addListener(
+      _syncMarkerScrollFromScorecard,
+    );
+    _markerHorizontalScrollController.addListener(
+      _syncScorecardScrollFromMarker,
+    );
     _ownsDatosServidorService = widget.datosServidorService == null;
     _datosServidorService =
         widget.datosServidorService ?? DatosServidorService();
@@ -189,10 +201,52 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   @override
   void dispose() {
     unawaited(_lockScorecardPortraitOrientation());
+    _scorecardHorizontalScrollController.removeListener(
+      _syncMarkerScrollFromScorecard,
+    );
+    _markerHorizontalScrollController.removeListener(
+      _syncScorecardScrollFromMarker,
+    );
+    _scorecardHorizontalScrollController.dispose();
+    _markerHorizontalScrollController.dispose();
     if (_ownsDatosServidorService) {
       _datosServidorService.close();
     }
     super.dispose();
+  }
+
+  void _syncMarkerScrollFromScorecard() {
+    _syncHorizontalScroll(
+      _scorecardHorizontalScrollController,
+      _markerHorizontalScrollController,
+    );
+  }
+
+  void _syncScorecardScrollFromMarker() {
+    _syncHorizontalScroll(
+      _markerHorizontalScrollController,
+      _scorecardHorizontalScrollController,
+    );
+  }
+
+  void _syncHorizontalScroll(ScrollController source, ScrollController target) {
+    if (_isSyncingHorizontalScroll ||
+        !source.hasClients ||
+        !target.hasClients) {
+      return;
+    }
+
+    final targetOffset = source.offset.clamp(
+      0.0,
+      target.position.maxScrollExtent,
+    );
+    if ((target.offset - targetOffset).abs() < 0.5) {
+      return;
+    }
+
+    _isSyncingHorizontalScroll = true;
+    target.jumpTo(targetOffset);
+    _isSyncingHorizontalScroll = false;
   }
 
   Future<void> _loadConfiguration() async {
@@ -722,12 +776,10 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                     0.0,
                     constraints.maxWidth - (horizontalPadding * 2),
                   );
-                  final cardWidth = availableWidth
-                      .clamp(
-                        GolfScorecardScreen._cardMinWidth,
-                        GolfScorecardScreen._cardMaxWidth,
-                      )
-                      .toDouble();
+                  final cardWidth = math.min(
+                    availableWidth,
+                    GolfScorecardScreen._cardMaxWidth,
+                  );
 
                   return SingleChildScrollView(
                     padding: EdgeInsets.all(horizontalPadding),
@@ -881,8 +933,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                         ),
                         const SizedBox(height: 12),
                         Center(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
+                          child: Padding(
                             padding: const EdgeInsets.only(bottom: 12),
                             child: SizedBox(
                               width: cardWidth,
@@ -911,6 +962,10 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                     _selectedGuideRowPairIndex,
                                 onGuideRowPairToggled: _toggleGuideRowPair,
                                 isEditable: !widget.isReadOnly,
+                                gridHorizontalScrollController:
+                                    _scorecardHorizontalScrollController,
+                                markerHorizontalScrollController:
+                                    _markerHorizontalScrollController,
                               ),
                             ),
                           ),
@@ -1483,6 +1538,8 @@ class _ScorecardCard extends StatelessWidget {
     required this.selectedGuideRowPairIndex,
     required this.onGuideRowPairToggled,
     required this.isEditable,
+    this.gridHorizontalScrollController,
+    this.markerHorizontalScrollController,
   });
 
   final List<_ScoreRowData> guideRows;
@@ -1505,13 +1562,12 @@ class _ScorecardCard extends StatelessWidget {
   final int? selectedGuideRowPairIndex;
   final ValueChanged<int> onGuideRowPairToggled;
   final bool isEditable;
+  final ScrollController? gridHorizontalScrollController;
+  final ScrollController? markerHorizontalScrollController;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(
-        minWidth: GolfScorecardScreen.scorecardWidth,
-      ),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: const Color.fromRGBO(92, 68, 47, 0.18)),
@@ -1564,6 +1620,7 @@ class _ScorecardCard extends StatelessWidget {
               selectedGuideRowPairIndex: selectedGuideRowPairIndex,
               onGuideRowPairToggled: onGuideRowPairToggled,
               isEditable: isEditable,
+              horizontalScrollController: gridHorizontalScrollController,
             ),
             if (loadError != null) ...[
               const SizedBox(height: 10),
@@ -1653,7 +1710,9 @@ class _ScorecardCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            const _MarkerStrip(),
+            _MarkerStrip(
+              horizontalScrollController: markerHorizontalScrollController,
+            ),
           ],
         ),
       ),
@@ -1818,6 +1877,7 @@ class _ScoreGrid extends StatelessWidget {
     required this.selectedGuideRowPairIndex,
     required this.onGuideRowPairToggled,
     required this.isEditable,
+    this.horizontalScrollController,
   });
 
   final List<_ScoreRowData> guideRows;
@@ -1829,6 +1889,7 @@ class _ScoreGrid extends StatelessWidget {
   final int? selectedGuideRowPairIndex;
   final ValueChanged<int> onGuideRowPairToggled;
   final bool isEditable;
+  final ScrollController? horizontalScrollController;
 
   @override
   Widget build(BuildContext context) {
@@ -1838,30 +1899,125 @@ class _ScoreGrid extends StatelessWidget {
       selectedGuideRowPairIndex,
     );
 
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bodyViewportWidth = math.max(
+          0.0,
+          constraints.maxWidth - GolfScorecardScreen._labelWidth,
+        );
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: GolfScorecardScreen._labelWidth,
+              child: _ScoreGridLabelColumn(
+                visibleGuideRows: visibleGuideRows,
+                playRowLabels: playRowLabels,
+                playRowPairNumbers: playRowPairNumbers,
+                playRowCount: playRowValues.length,
+                isEditable: isEditable,
+                onGuideRowPairToggled: onGuideRowPairToggled,
+              ),
+            ),
+            SizedBox(
+              width: bodyViewportWidth,
+              child: SingleChildScrollView(
+                controller: horizontalScrollController,
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: GolfScorecardScreen.scorecardScrollableContentWidth,
+                  child: _ScoreGridBodyColumn(
+                    visibleGuideRows: visibleGuideRows,
+                    playRowValues: playRowValues,
+                    handicapValues: handicapValues,
+                    isEditable: isEditable,
+                    onPlayValueChanged: onPlayValueChanged,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ScoreGridLabelColumn extends StatelessWidget {
+  const _ScoreGridLabelColumn({
+    required this.visibleGuideRows,
+    required this.playRowLabels,
+    required this.playRowPairNumbers,
+    required this.playRowCount,
+    required this.isEditable,
+    required this.onGuideRowPairToggled,
+  });
+
+  final List<_ScoreRowData> visibleGuideRows;
+  final List<String> playRowLabels;
+  final List<int> playRowPairNumbers;
+  final int playRowCount;
+  final bool isEditable;
+  final ValueChanged<int> onGuideRowPairToggled;
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       children: [
-        const _GridHeaderRow(),
+        const _GridHeaderLabel(),
         ...visibleGuideRows.map((row) {
           final pairIndex = _guideRowPairIndexForLabel(row.label);
-          return _GridDataRow(
+          return _GridDataLabel(
             row: row,
             onLabelTap: pairIndex == null
                 ? null
                 : () => onGuideRowPairToggled(pairIndex),
           );
         }),
-        ...playRowValues.asMap().entries.map((entry) {
-          final rowIndex = entry.key;
-          return _GridPlayRow(
+        for (var rowIndex = 0; rowIndex < playRowCount; rowIndex++)
+          _GridPlayLabel(
             row: _playRowTemplate,
-            rowIndex: rowIndex,
-            values: entry.value,
             playerLabel: rowIndex < playRowLabels.length
                 ? playRowLabels[rowIndex]
                 : '${rowIndex + 1}',
             pairNumber: rowIndex < playRowPairNumbers.length
                 ? playRowPairNumbers[rowIndex]
                 : 0,
+            isEditable: isEditable,
+          ),
+      ],
+    );
+  }
+}
+
+class _ScoreGridBodyColumn extends StatelessWidget {
+  const _ScoreGridBodyColumn({
+    required this.visibleGuideRows,
+    required this.playRowValues,
+    required this.handicapValues,
+    required this.isEditable,
+    required this.onPlayValueChanged,
+  });
+
+  final List<_ScoreRowData> visibleGuideRows;
+  final List<List<String>> playRowValues;
+  final List<String> handicapValues;
+  final bool isEditable;
+  final void Function(int rowIndex, int holeIndex, String value)
+  onPlayValueChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const _GridHeaderBody(),
+        for (final row in visibleGuideRows) _GridDataBody(row: row),
+        ...playRowValues.asMap().entries.map((entry) {
+          return _GridPlayBody(
+            row: _playRowTemplate,
+            rowIndex: entry.key,
+            values: entry.value,
             handicapValues: handicapValues,
             isEditable: isEditable,
             onValueChanged: onPlayValueChanged,
@@ -1872,25 +2028,42 @@ class _ScoreGrid extends StatelessWidget {
   }
 }
 
-class _GridHeaderRow extends StatelessWidget {
-  const _GridHeaderRow();
+class _GridHeaderLabel extends StatelessWidget {
+  const _GridHeaderLabel();
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 5),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(7),
+        borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
+        child: SizedBox(
+          height: 56,
+          child: _GridCell.header(
+            width: GolfScorecardScreen._labelWidth,
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: const Text('FORAT'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GridHeaderBody extends StatelessWidget {
+  const _GridHeaderBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.horizontal(right: Radius.circular(7)),
         child: SizedBox(
           height: 56,
           child: Row(
             children: [
-              _GridCell.header(
-                width: GolfScorecardScreen._labelWidth,
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: const Text('FORAT'),
-              ),
               for (final hole in _frontNine)
                 _GridCell.header(
                   width: GolfScorecardScreen._holeWidth,
@@ -1932,8 +2105,8 @@ class _GridHeaderRow extends StatelessWidget {
   }
 }
 
-class _GridDataRow extends StatelessWidget {
-  const _GridDataRow({required this.row, required this.onLabelTap});
+class _GridDataLabel extends StatelessWidget {
+  const _GridDataLabel({required this.row, required this.onLabelTap});
 
   final _ScoreRowData row;
   final VoidCallback? onLabelTap;
@@ -1942,20 +2115,33 @@ class _GridDataRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: row.height,
+      child: _GridCell.data(
+        width: GolfScorecardScreen._labelWidth,
+        tone: row.tone,
+        decoration: _guideLabelReliefDecoration(row.tone),
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        isLabel: true,
+        child: _GuideRowLabelTapTarget(
+          onTap: onLabelTap,
+          child: _RowLabel(row: row),
+        ),
+      ),
+    );
+  }
+}
+
+class _GridDataBody extends StatelessWidget {
+  const _GridDataBody({required this.row});
+
+  final _ScoreRowData row;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: row.height,
       child: Row(
         children: [
-          _GridCell.data(
-            width: GolfScorecardScreen._labelWidth,
-            tone: row.tone,
-            decoration: _guideLabelReliefDecoration(row.tone),
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            isLabel: true,
-            child: _GuideRowLabelTapTarget(
-              onTap: onLabelTap,
-              child: _RowLabel(row: row),
-            ),
-          ),
           for (final value in row.frontValues)
             _GridCell.data(
               width: GolfScorecardScreen._holeWidth,
@@ -1990,13 +2176,41 @@ class _GridDataRow extends StatelessWidget {
   }
 }
 
-class _GridPlayRow extends StatelessWidget {
-  const _GridPlayRow({
+class _GridPlayLabel extends StatelessWidget {
+  const _GridPlayLabel({
+    required this.row,
+    required this.playerLabel,
+    required this.pairNumber,
+    required this.isEditable,
+  });
+
+  final _ScoreRowData row;
+  final String playerLabel;
+  final int pairNumber;
+  final bool isEditable;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: row.height,
+      child: _GridCell.data(
+        width: GolfScorecardScreen._labelWidth,
+        tone: row.tone,
+        decoration: _playerPairLabelDecoration(pairNumber),
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        isLabel: true,
+        child: _PlayRowLabel(label: playerLabel, isEditable: isEditable),
+      ),
+    );
+  }
+}
+
+class _GridPlayBody extends StatelessWidget {
+  const _GridPlayBody({
     required this.row,
     required this.rowIndex,
     required this.values,
-    required this.playerLabel,
-    required this.pairNumber,
     required this.handicapValues,
     required this.isEditable,
     required this.onValueChanged,
@@ -2005,8 +2219,6 @@ class _GridPlayRow extends StatelessWidget {
   final _ScoreRowData row;
   final int rowIndex;
   final List<String> values;
-  final String playerLabel;
-  final int pairNumber;
   final List<String> handicapValues;
   final bool isEditable;
   final void Function(int rowIndex, int holeIndex, String value) onValueChanged;
@@ -2024,15 +2236,6 @@ class _GridPlayRow extends StatelessWidget {
       height: row.height,
       child: Row(
         children: [
-          _GridCell.data(
-            width: GolfScorecardScreen._labelWidth,
-            tone: tone,
-            decoration: _playerPairLabelDecoration(pairNumber),
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            isLabel: true,
-            child: _PlayRowLabel(label: playerLabel, isEditable: isEditable),
-          ),
           for (final entry in frontValues.asMap().entries)
             _GridCell.data(
               width: GolfScorecardScreen._holeWidth,
@@ -2253,46 +2456,80 @@ String _sumScoreValues(Iterable<String> values) {
 }
 
 class _MarkerStrip extends StatelessWidget {
-  const _MarkerStrip();
+  const _MarkerStrip({this.horizontalScrollController});
+
+  final ScrollController? horizontalScrollController;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 46,
-      child: Row(
-        children: [
-          _MarkerCell.label(
-            width: GolfScorecardScreen._labelWidth,
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            child: const Text('marcador'),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bodyViewportWidth = math.max(
+          0.0,
+          constraints.maxWidth - GolfScorecardScreen._labelWidth,
+        );
+
+        return SizedBox(
+          height: 46,
+          child: Row(
+            children: [
+              _MarkerCell.label(
+                width: GolfScorecardScreen._labelWidth,
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: const Text('marcador'),
+              ),
+              SizedBox(
+                width: bodyViewportWidth,
+                child: SingleChildScrollView(
+                  controller: horizontalScrollController,
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: GolfScorecardScreen.scorecardScrollableContentWidth,
+                    child: const _MarkerStripBody(),
+                  ),
+                ),
+              ),
+            ],
           ),
-          for (final _ in _frontNine)
-            _MarkerCell.play(
-              width: GolfScorecardScreen._holeWidth,
-              child: const SizedBox.shrink(),
-            ),
-          _MarkerCell.total(
-            width: GolfScorecardScreen._subtotalWidth,
+        );
+      },
+    );
+  }
+}
+
+class _MarkerStripBody extends StatelessWidget {
+  const _MarkerStripBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (final _ in _frontNine)
+          _MarkerCell.play(
+            width: GolfScorecardScreen._holeWidth,
             child: const SizedBox.shrink(),
           ),
-          const _FoldCell(markerMode: true),
-          for (final _ in _backNine)
-            _MarkerCell.play(
-              width: GolfScorecardScreen._holeWidth,
-              child: const SizedBox.shrink(),
-            ),
-          _MarkerCell.total(
-            width: GolfScorecardScreen._subtotalWidth,
+        _MarkerCell.total(
+          width: GolfScorecardScreen._subtotalWidth,
+          child: const SizedBox.shrink(),
+        ),
+        const _FoldCell(markerMode: true),
+        for (final _ in _backNine)
+          _MarkerCell.play(
+            width: GolfScorecardScreen._holeWidth,
             child: const SizedBox.shrink(),
           ),
-          for (final _ in _summaryHeaders)
-            _MarkerCell.summary(
-              width: GolfScorecardScreen._summaryWidth,
-              child: const SizedBox.shrink(),
-            ),
-        ],
-      ),
+        _MarkerCell.total(
+          width: GolfScorecardScreen._subtotalWidth,
+          child: const SizedBox.shrink(),
+        ),
+        for (final _ in _summaryHeaders)
+          _MarkerCell.summary(
+            width: GolfScorecardScreen._summaryWidth,
+            child: const SizedBox.shrink(),
+          ),
+      ],
     );
   }
 }
