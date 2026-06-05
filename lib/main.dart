@@ -1495,6 +1495,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     if (_activeSession case final session?) {
       return GolfScorecardScreen(
         idPartida: session.idPartida,
+        idCampo: session.idCampo,
         jugadores: session.jugadores,
         initialPlayRowsJson: session.playRowsJson,
         differentRemotePlayRowsJson: _differentRemotePlayRowsJson,

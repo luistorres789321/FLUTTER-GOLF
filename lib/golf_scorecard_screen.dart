@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_golf/geo_perspective_screen.dart';
 import 'package:flutter_golf/services/datos_servidor_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -56,6 +57,7 @@ class GolfScorecardScreen extends StatefulWidget {
   const GolfScorecardScreen({
     super.key,
     required this.idPartida,
+    this.idCampo = '1',
     required this.jugadores,
     required this.initialPlayRowsJson,
     required this.onExit,
@@ -92,6 +94,7 @@ class GolfScorecardScreen extends StatefulWidget {
       scorecardContentWidth + _cardHorizontalPadding + _cardBorderWidth;
   static const double _cardMaxWidth = 1560;
   final String idPartida;
+  final String idCampo;
   final String jugadores;
   final String initialPlayRowsJson;
   final String? differentRemotePlayRowsJson;
@@ -115,6 +118,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
   late final DatosServidorService _datosServidorService;
   late final bool _ownsDatosServidorService;
   late List<_ScoreRowData> _guideRows;
+  late List<GeoPerspectivePoints> _holePerspectivePoints;
   late List<List<String>> _playRowValues;
   late List<String> _playRowUserIds;
   late List<String> _playRowPlayerLabels;
@@ -152,6 +156,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
     _datosServidorService =
         widget.datosServidorService ?? DatosServidorService();
     _guideRows = _buildGuideRows();
+    _holePerspectivePoints = _buildHolePerspectivePoints();
     _playRowValues = _decodePlayRows(widget.initialPlayRowsJson);
     _playRowUserIds = _decodePlayRowUserIds(widget.initialPlayRowsJson);
     _playRowPlayerLabels = _decodePlayRowPlayerLabels(
@@ -265,6 +270,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
 
       setState(() {
         _guideRows = configuration.toGuideRows();
+        _holePerspectivePoints = configuration.toHolePerspectivePoints();
         _loadError = null;
       });
     } catch (_) {
@@ -507,11 +513,14 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
         fullscreenDialog: true,
         builder: (context) => _FullscreenScorecardScreen(
           guideRows: _guideRows,
+          holePerspectivePoints: _holePerspectivePoints,
           playRowValues: _playRowValues,
           playRowLabels: _playRowPlayerLabels,
           playRowPairNumbers: _playRowPairNumbers,
           idPartida: widget.idPartida,
+          idCampo: widget.idCampo,
           jugadores: widget.jugadores,
+          datosServidorService: _datosServidorService,
           leagueTitle: widget.leagueTitle,
           leagueRound: _leagueRoundOverride ?? widget.leagueRound,
           leagueRoundOptions: widget.leagueRoundOptions,
@@ -533,6 +542,29 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
       unawaited(_allowScorecardOrientations());
       unawaited(_showSystemUi());
     }
+  }
+
+  Future<void> _openHolePerspective(int holeIndex) async {
+    final perspectiveData = await _loadHolePerspectiveData(
+      datosServidorService: _datosServidorService,
+      idCampo: widget.idCampo,
+      holeIndex: holeIndex,
+      fallbackHolePerspectivePoints: _holePerspectivePoints,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => GeoPerspectiveScreen(
+          title: 'Mapa Hoyo ${holeIndex + 1}',
+          idCampo: widget.idCampo,
+          points: perspectiveData.points,
+          mapConfig: perspectiveData.mapConfig,
+        ),
+      ),
+    );
   }
 
   void _applyPairDialogResult(_PairDialogResult result) {
@@ -939,6 +971,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                               width: cardWidth,
                               child: _ScorecardCard(
                                 guideRows: _guideRows,
+                                holePerspectivePoints: _holePerspectivePoints,
                                 playRowValues: _playRowValues,
                                 playRowLabels: _playRowPlayerLabels,
                                 playRowPairNumbers: _playRowPairNumbers,
@@ -958,6 +991,7 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
                                 pairBackendResponse: _pairBackendResponse,
                                 pairBackendUrl: _pairBackendUrl,
                                 onPlayValueChanged: _updatePlayValue,
+                                onHolePerspectivePressed: _openHolePerspective,
                                 selectedGuideRowPairIndex:
                                     _selectedGuideRowPairIndex,
                                 onGuideRowPairToggled: _toggleGuideRowPair,
@@ -1345,11 +1379,14 @@ class _PairDialogResult {
 class _FullscreenScorecardScreen extends StatefulWidget {
   const _FullscreenScorecardScreen({
     required this.guideRows,
+    required this.holePerspectivePoints,
     required this.playRowValues,
     required this.playRowLabels,
     required this.playRowPairNumbers,
     required this.idPartida,
+    required this.idCampo,
     required this.jugadores,
+    required this.datosServidorService,
     required this.leagueTitle,
     required this.leagueRound,
     required this.leagueRoundOptions,
@@ -1364,11 +1401,14 @@ class _FullscreenScorecardScreen extends StatefulWidget {
   });
 
   final List<_ScoreRowData> guideRows;
+  final List<GeoPerspectivePoints> holePerspectivePoints;
   final List<List<String>> playRowValues;
   final List<String> playRowLabels;
   final List<int> playRowPairNumbers;
   final String idPartida;
+  final String idCampo;
   final String jugadores;
+  final DatosServidorService datosServidorService;
   final String leagueTitle;
   final String leagueRound;
   final List<int> leagueRoundOptions;
@@ -1452,6 +1492,29 @@ class _FullscreenScorecardScreenState
     }
   }
 
+  Future<void> _openHolePerspective(int holeIndex) async {
+    final perspectiveData = await _loadHolePerspectiveData(
+      datosServidorService: widget.datosServidorService,
+      idCampo: widget.idCampo,
+      holeIndex: holeIndex,
+      fallbackHolePerspectivePoints: widget.holePerspectivePoints,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => GeoPerspectiveScreen(
+          title: 'Mapa Hoyo ${holeIndex + 1}',
+          idCampo: widget.idCampo,
+          points: perspectiveData.points,
+          mapConfig: perspectiveData.mapConfig,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1468,6 +1531,7 @@ class _FullscreenScorecardScreenState
                     width: GolfScorecardScreen.scorecardWidth,
                     child: _ScorecardCard(
                       guideRows: widget.guideRows,
+                      holePerspectivePoints: widget.holePerspectivePoints,
                       playRowValues: widget.playRowValues,
                       playRowLabels: widget.playRowLabels,
                       playRowPairNumbers: widget.playRowPairNumbers,
@@ -1485,6 +1549,7 @@ class _FullscreenScorecardScreenState
                       pairBackendResponse: null,
                       pairBackendUrl: null,
                       onPlayValueChanged: _updatePlayValue,
+                      onHolePerspectivePressed: _openHolePerspective,
                       selectedGuideRowPairIndex: _selectedGuideRowPairIndex,
                       onGuideRowPairToggled: _toggleGuideRowPair,
                       isEditable: widget.isEditable,
@@ -1520,6 +1585,7 @@ class _FullscreenScorecardScreenState
 class _ScorecardCard extends StatelessWidget {
   const _ScorecardCard({
     required this.guideRows,
+    required this.holePerspectivePoints,
     required this.playRowValues,
     required this.playRowLabels,
     required this.playRowPairNumbers,
@@ -1535,6 +1601,7 @@ class _ScorecardCard extends StatelessWidget {
     required this.pairBackendResponse,
     required this.pairBackendUrl,
     required this.onPlayValueChanged,
+    required this.onHolePerspectivePressed,
     required this.selectedGuideRowPairIndex,
     required this.onGuideRowPairToggled,
     required this.isEditable,
@@ -1543,6 +1610,7 @@ class _ScorecardCard extends StatelessWidget {
   });
 
   final List<_ScoreRowData> guideRows;
+  final List<GeoPerspectivePoints> holePerspectivePoints;
   final List<List<String>> playRowValues;
   final List<String> playRowLabels;
   final List<int> playRowPairNumbers;
@@ -1559,6 +1627,7 @@ class _ScorecardCard extends StatelessWidget {
   final String? pairBackendUrl;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final ValueChanged<int> onHolePerspectivePressed;
   final int? selectedGuideRowPairIndex;
   final ValueChanged<int> onGuideRowPairToggled;
   final bool isEditable;
@@ -1613,10 +1682,12 @@ class _ScorecardCard extends StatelessWidget {
             ],
             _ScoreGrid(
               guideRows: guideRows,
+              holePerspectivePoints: holePerspectivePoints,
               playRowValues: playRowValues,
               playRowLabels: playRowLabels,
               playRowPairNumbers: playRowPairNumbers,
               onPlayValueChanged: onPlayValueChanged,
+              onHolePerspectivePressed: onHolePerspectivePressed,
               selectedGuideRowPairIndex: selectedGuideRowPairIndex,
               onGuideRowPairToggled: onGuideRowPairToggled,
               isEditable: isEditable,
@@ -1870,10 +1941,12 @@ List<int> _normalizedRoundOptions(
 class _ScoreGrid extends StatelessWidget {
   const _ScoreGrid({
     required this.guideRows,
+    required this.holePerspectivePoints,
     required this.playRowValues,
     required this.playRowLabels,
     required this.playRowPairNumbers,
     required this.onPlayValueChanged,
+    required this.onHolePerspectivePressed,
     required this.selectedGuideRowPairIndex,
     required this.onGuideRowPairToggled,
     required this.isEditable,
@@ -1881,11 +1954,13 @@ class _ScoreGrid extends StatelessWidget {
   });
 
   final List<_ScoreRowData> guideRows;
+  final List<GeoPerspectivePoints> holePerspectivePoints;
   final List<List<String>> playRowValues;
   final List<String> playRowLabels;
   final List<int> playRowPairNumbers;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final ValueChanged<int> onHolePerspectivePressed;
   final int? selectedGuideRowPairIndex;
   final ValueChanged<int> onGuideRowPairToggled;
   final bool isEditable;
@@ -1929,10 +2004,12 @@ class _ScoreGrid extends StatelessWidget {
                   width: GolfScorecardScreen.scorecardScrollableContentWidth,
                   child: _ScoreGridBodyColumn(
                     visibleGuideRows: visibleGuideRows,
+                    holePerspectivePoints: holePerspectivePoints,
                     playRowValues: playRowValues,
                     handicapValues: handicapValues,
                     isEditable: isEditable,
                     onPlayValueChanged: onPlayValueChanged,
+                    onHolePerspectivePressed: onHolePerspectivePressed,
                   ),
                 ),
               ),
@@ -1994,24 +2071,31 @@ class _ScoreGridLabelColumn extends StatelessWidget {
 class _ScoreGridBodyColumn extends StatelessWidget {
   const _ScoreGridBodyColumn({
     required this.visibleGuideRows,
+    required this.holePerspectivePoints,
     required this.playRowValues,
     required this.handicapValues,
     required this.isEditable,
     required this.onPlayValueChanged,
+    required this.onHolePerspectivePressed,
   });
 
   final List<_ScoreRowData> visibleGuideRows;
+  final List<GeoPerspectivePoints> holePerspectivePoints;
   final List<List<String>> playRowValues;
   final List<String> handicapValues;
   final bool isEditable;
   final void Function(int rowIndex, int holeIndex, String value)
   onPlayValueChanged;
+  final ValueChanged<int> onHolePerspectivePressed;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const _GridHeaderBody(),
+        _GridHeaderBody(
+          holePerspectivePoints: holePerspectivePoints,
+          onHolePerspectivePressed: onHolePerspectivePressed,
+        ),
         for (final row in visibleGuideRows) _GridDataBody(row: row),
         ...playRowValues.asMap().entries.map((entry) {
           return _GridPlayBody(
@@ -2052,7 +2136,13 @@ class _GridHeaderLabel extends StatelessWidget {
 }
 
 class _GridHeaderBody extends StatelessWidget {
-  const _GridHeaderBody();
+  const _GridHeaderBody({
+    required this.holePerspectivePoints,
+    required this.onHolePerspectivePressed,
+  });
+
+  final List<GeoPerspectivePoints> holePerspectivePoints;
+  final ValueChanged<int> onHolePerspectivePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -2065,9 +2155,10 @@ class _GridHeaderBody extends StatelessWidget {
           child: Row(
             children: [
               for (final hole in _frontNine)
-                _GridCell.header(
-                  width: GolfScorecardScreen._holeWidth,
-                  child: Text('$hole'),
+                _HolePerspectiveHeaderCell(
+                  hole: hole,
+                  enabled: hole - 1 < holePerspectivePoints.length,
+                  onPressed: () => onHolePerspectivePressed(hole - 1),
                 ),
               _GridCell.header(
                 width: GolfScorecardScreen._subtotalWidth,
@@ -2075,9 +2166,10 @@ class _GridHeaderBody extends StatelessWidget {
               ),
               const _FoldCell(),
               for (final hole in _backNine)
-                _GridCell.header(
-                  width: GolfScorecardScreen._holeWidth,
-                  child: Text('$hole'),
+                _HolePerspectiveHeaderCell(
+                  hole: hole,
+                  enabled: hole - 1 < holePerspectivePoints.length,
+                  onPressed: () => onHolePerspectivePressed(hole - 1),
                 ),
               _GridCell.header(
                 width: GolfScorecardScreen._subtotalWidth,
@@ -2100,6 +2192,56 @@ class _GridHeaderBody extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _HolePerspectiveHeaderCell extends StatelessWidget {
+  const _HolePerspectiveHeaderCell({
+    required this.hole,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final int hole;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return _GridCell.header(
+      width: GolfScorecardScreen._holeWidth,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '$hole',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              height: 1,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 3),
+          IconButton(
+            key: ValueKey('scorecard_hole_perspective_icon_$hole'),
+            onPressed: enabled ? onPressed : null,
+            tooltip: 'Ver perspectiva hoyo $hole',
+            icon: const Icon(Icons.visibility, size: 16),
+            color: const Color(0xFFF5F7F0),
+            disabledColor: const Color.fromRGBO(245, 247, 240, 0.35),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 22, height: 22),
+            style: IconButton.styleFrom(
+              fixedSize: const Size(22, 22),
+              minimumSize: const Size(22, 22),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     );
   }
@@ -3049,6 +3191,18 @@ class _ScorecardConfiguration {
     ];
   }
 
+  List<GeoPerspectivePoints> toHolePerspectivePoints() {
+    final valuesByHole = <int, GeoPerspectivePoints>{
+      for (final hole in holes) hole.hoyo: hole.perspectivePoints,
+    };
+
+    return List.generate(
+      18,
+      (index) => valuesByHole[index + 1] ?? defaultGolfPerspectivePoints,
+      growable: false,
+    );
+  }
+
   _ScoreRowData _rowFromMetric({
     required String label,
     _RowTone tone = _RowTone.base,
@@ -3103,6 +3257,7 @@ class _HoleConfiguration {
     required this.handicapEppa,
     required this.metresBlanc,
     required this.handicapBlanc,
+    required this.perspectivePoints,
   });
 
   final int hoyo;
@@ -3112,6 +3267,7 @@ class _HoleConfiguration {
   final String handicapEppa;
   final String metresBlanc;
   final String handicapBlanc;
+  final GeoPerspectivePoints perspectivePoints;
 
   factory _HoleConfiguration.fromJson(Map<String, dynamic> json) {
     return _HoleConfiguration(
@@ -3122,8 +3278,476 @@ class _HoleConfiguration {
       handicapEppa: '${json['handicap_EPPA'] ?? json['hadicap_EPPA'] ?? ''}',
       metresBlanc: '${json['metros_BLANC'] ?? ''}',
       handicapBlanc: '${json['handicap_BLANC'] ?? ''}',
+      perspectivePoints: _geoPerspectivePointsFromJson(json),
     );
   }
+}
+
+GeoPerspectivePoints _geoPerspectivePointsFromJson(Map<String, dynamic> json) {
+  final bottomPoint = _geoLatLonFromJson(
+    json,
+    nestedKeys: const [
+      'bottomPoint',
+      'bottom_point',
+      'puntoAbajo',
+      'punto_abajo',
+      'inicio',
+      'salida',
+      'tee',
+      'p1',
+    ],
+    latKeys: const [
+      'lat1',
+      'lat_1',
+      'latitud1',
+      'latitud_1',
+      'latInicio',
+      'lat_inicio',
+      'latitud_inicio',
+      'latSalida',
+      'lat_salida',
+      'latitud_salida',
+      'salida_lat',
+      'tee_lat',
+      'lat_tee',
+      'bottom_lat',
+      'lat_bottom',
+      'lat_inferior',
+      'p1_lat',
+      'lat_p1',
+    ],
+    lonKeys: const [
+      'lon1',
+      'lng1',
+      'long1',
+      'lon_1',
+      'lng_1',
+      'longitud1',
+      'longitud_1',
+      'lonInicio',
+      'lon_inicio',
+      'lng_inicio',
+      'longitud_inicio',
+      'lonSalida',
+      'lon_salida',
+      'lng_salida',
+      'longitud_salida',
+      'salida_lon',
+      'salida_lng',
+      'tee_lon',
+      'tee_lng',
+      'lon_tee',
+      'lng_tee',
+      'bottom_lon',
+      'bottom_lng',
+      'lon_bottom',
+      'lng_bottom',
+      'lon_inferior',
+      'lng_inferior',
+      'p1_lon',
+      'p1_lng',
+      'lon_p1',
+      'lng_p1',
+    ],
+  );
+  final topPoint = _geoLatLonFromJson(
+    json,
+    nestedKeys: const [
+      'topPoint',
+      'top_point',
+      'puntoArriba',
+      'punto_arriba',
+      'fin',
+      'green',
+      'bandera',
+      'p2',
+    ],
+    latKeys: const [
+      'lat2',
+      'lat_2',
+      'latitud2',
+      'latitud_2',
+      'latFin',
+      'lat_fin',
+      'latFinal',
+      'lat_final',
+      'latitud_fin',
+      'latitud_final',
+      'latGreen',
+      'lat_green',
+      'green_lat',
+      'latBandera',
+      'lat_bandera',
+      'bandera_lat',
+      'top_lat',
+      'lat_top',
+      'lat_superior',
+      'p2_lat',
+      'lat_p2',
+    ],
+    lonKeys: const [
+      'lon2',
+      'lng2',
+      'long2',
+      'lon_2',
+      'lng_2',
+      'longitud2',
+      'longitud_2',
+      'lonFin',
+      'lon_fin',
+      'lng_fin',
+      'lonFinal',
+      'lon_final',
+      'lng_final',
+      'longitud_fin',
+      'longitud_final',
+      'lonGreen',
+      'lon_green',
+      'lng_green',
+      'green_lon',
+      'green_lng',
+      'lonBandera',
+      'lon_bandera',
+      'lng_bandera',
+      'bandera_lon',
+      'bandera_lng',
+      'top_lon',
+      'top_lng',
+      'lon_top',
+      'lng_top',
+      'lon_superior',
+      'lng_superior',
+      'p2_lon',
+      'p2_lng',
+      'lon_p2',
+      'lng_p2',
+    ],
+  );
+
+  if (bottomPoint == null || topPoint == null) {
+    return defaultGolfPerspectivePoints;
+  }
+
+  return GeoPerspectivePoints(bottomPoint: bottomPoint, topPoint: topPoint);
+}
+
+GeoLatLon? _geoLatLonFromJson(
+  Map<String, dynamic> json, {
+  required List<String> nestedKeys,
+  required List<String> latKeys,
+  required List<String> lonKeys,
+}) {
+  for (final nestedKey in nestedKeys) {
+    final nestedValue = _firstJsonLikeValue(json, [nestedKey]);
+    if (nestedValue is Map) {
+      final nestedMap = nestedValue.map(
+        (key, value) => MapEntry('$key', value),
+      );
+      final point = _geoLatLonFromJson(
+        nestedMap,
+        nestedKeys: const [],
+        latKeys: const ['lat', 'latitude', 'latitud'],
+        lonKeys: const ['lon', 'lng', 'long', 'longitude', 'longitud'],
+      );
+      if (point != null) {
+        return point;
+      }
+    }
+  }
+
+  final lat = _firstDoubleValue(json, latKeys);
+  final lon = _firstDoubleValue(json, lonKeys);
+  if (lat == null || lon == null) {
+    return null;
+  }
+
+  return GeoLatLon(lat: lat, lon: lon);
+}
+
+Object? _firstJsonLikeValue(Map<String, dynamic> json, List<String> keys) {
+  final normalizedValues = <String, Object?>{};
+  for (final entry in json.entries) {
+    normalizedValues[entry.key.toLowerCase()] = entry.value;
+  }
+
+  for (final key in keys) {
+    if (json.containsKey(key)) {
+      return json[key];
+    }
+
+    final normalizedKey = key.toLowerCase();
+    if (normalizedValues.containsKey(normalizedKey)) {
+      return normalizedValues[normalizedKey];
+    }
+  }
+
+  return null;
+}
+
+double? _firstDoubleValue(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final parsed = _doubleFromJsonLikeValue(_firstJsonLikeValue(json, [key]));
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+double? _doubleFromJsonLikeValue(Object? value) {
+  if (value is num) {
+    return value.toDouble();
+  }
+
+  final normalizedValue = '${value ?? ''}'.trim().replaceAll(',', '.');
+  if (normalizedValue.isEmpty) {
+    return null;
+  }
+
+  return double.tryParse(normalizedValue);
+}
+
+class _GeoReferenceConfiguration {
+  const _GeoReferenceConfiguration({
+    required this.mapConfig,
+    required this.holePerspectivePoints,
+  });
+
+  final GeoPerspectiveMapConfig mapConfig;
+  final List<GeoPerspectivePoints> holePerspectivePoints;
+
+  static _GeoReferenceConfiguration? fromBackendResponse(String rawResponse) {
+    final rawPayload = _geoReferencePayload(rawResponse);
+    final decoded = _decodeJsonLikePayload(rawPayload);
+    final map = _jsonMapFromValue(decoded);
+    if (map == null) {
+      return null;
+    }
+
+    return _GeoReferenceConfiguration.fromJson(map);
+  }
+
+  static _GeoReferenceConfiguration? fromJson(Map<String, dynamic> json) {
+    final imageMap = _jsonMapFromValue(_firstJsonLikeValue(json, ['imagen']));
+    final imageUrl =
+        _stringFromJsonLikeValue(
+          _firstJsonLikeValue(json, ['url-imagen-limpia', 'urlImagenLimpia']),
+        ) ??
+        _stringFromJsonLikeValue(_firstJsonLikeValue(imageMap ?? {}, ['url']));
+    final imageWidth =
+        _positiveDoubleValue(imageMap, ['width', 'ancho']) ??
+        defaultGolfPerspectiveMapConfig.imagePixelSize.width;
+    final imageHeight =
+        _positiveDoubleValue(imageMap, ['height', 'alto']) ??
+        defaultGolfPerspectiveMapConfig.imagePixelSize.height;
+    final pixelMap = _jsonMapFromValue(_firstJsonLikeValue(json, ['puntos']));
+    final coordinateMap = _jsonMapFromValue(
+      _firstJsonLikeValue(json, ['coordenadas']),
+    );
+    final controlPoints = _geoControlPointsFromMaps(
+      pixelMap: pixelMap,
+      coordinateMap: coordinateMap,
+    );
+    if (controlPoints == null) {
+      return null;
+    }
+
+    final mapConfig = GeoPerspectiveMapConfig(
+      assetImagePath: defaultGolfPerspectiveMapConfig.assetImagePath,
+      imageUrl: imageUrl ?? '',
+      imagePixelSize: Size(imageWidth, imageHeight),
+      controlPoints: controlPoints,
+    );
+    final holesMap = _jsonMapFromValue(_firstJsonLikeValue(json, ['hoyos']));
+    final holePerspectivePoints = List.generate(18, (index) {
+      final hole = index + 1;
+      final bottomPixel = _holePixelFromMap(
+        holesMap,
+        prefix: 'salida_roja',
+        hole: hole,
+      );
+      final topPixel = _holePixelFromMap(holesMap, prefix: 'hoyo', hole: hole);
+      if (bottomPixel == null || topPixel == null) {
+        return defaultGolfPerspectivePoints;
+      }
+
+      try {
+        return mapConfig.pointsFromPixels(
+          bottomPixel: bottomPixel,
+          topPixel: topPixel,
+        );
+      } catch (error) {
+        debugPrint('georeferencia hoyo $hole invalida: $error');
+        return defaultGolfPerspectivePoints;
+      }
+    }, growable: false);
+
+    return _GeoReferenceConfiguration(
+      mapConfig: mapConfig,
+      holePerspectivePoints: holePerspectivePoints,
+    );
+  }
+}
+
+String _geoReferencePayload(String rawResponse) {
+  try {
+    return _ScorecardConfiguration._extractValor(rawResponse);
+  } catch (_) {
+    return rawResponse;
+  }
+}
+
+List<GeoControlPoint>? _geoControlPointsFromMaps({
+  required Map<String, dynamic>? pixelMap,
+  required Map<String, dynamic>? coordinateMap,
+}) {
+  if (pixelMap == null || coordinateMap == null) {
+    return null;
+  }
+
+  final controlPoints = <GeoControlPoint>[];
+  for (var index = 1; index <= 4; index++) {
+    final px = _firstDoubleValue(pixelMap, ['px$index']);
+    final py = _firstDoubleValue(pixelMap, ['py$index']);
+    final lat = _firstDoubleValue(coordinateMap, ['lat$index']);
+    final lon = _firstDoubleValue(coordinateMap, ['lon$index', 'lng$index']);
+    if (px == null || py == null || lat == null || lon == null) {
+      return null;
+    }
+
+    controlPoints.add(
+      GeoControlPoint(
+        pixel: Offset(px, py),
+        geo: GeoLatLon(lat: lat, lon: lon),
+      ),
+    );
+  }
+
+  return controlPoints;
+}
+
+Offset? _holePixelFromMap(
+  Map<String, dynamic>? map, {
+  required String prefix,
+  required int hole,
+}) {
+  if (map == null) {
+    return null;
+  }
+
+  final x = _firstDoubleValue(map, [
+    '$prefix${hole}_x',
+    '${prefix}_${hole}_x',
+    '$prefix${hole}X',
+    '${prefix}_${hole}X',
+  ]);
+  final y = _firstDoubleValue(map, [
+    '$prefix${hole}_y',
+    '${prefix}_${hole}_y',
+    '$prefix${hole}Y',
+    '${prefix}_${hole}Y',
+  ]);
+  if (x == null || y == null || !x.isFinite || !y.isFinite) {
+    return null;
+  }
+
+  if (x == 0 && y == 0) {
+    return null;
+  }
+
+  return Offset(x, y);
+}
+
+double? _positiveDoubleValue(Map<String, dynamic>? map, List<String> keys) {
+  if (map == null) {
+    return null;
+  }
+
+  final value = _firstDoubleValue(map, keys);
+  if (value == null || value <= 0) {
+    return null;
+  }
+
+  return value;
+}
+
+Map<String, dynamic>? _jsonMapFromValue(Object? value) {
+  if (value is Map) {
+    return value.map((key, value) => MapEntry('$key', value));
+  }
+
+  if (value is String) {
+    final decoded = _decodeJsonLikePayload(value.trim());
+    if (decoded is Map) {
+      return decoded.map((key, value) => MapEntry('$key', value));
+    }
+  }
+
+  return null;
+}
+
+String? _stringFromJsonLikeValue(Object? value) {
+  final text = '${value ?? ''}'.trim();
+  return text.isEmpty ? null : text;
+}
+
+class _HolePerspectiveData {
+  const _HolePerspectiveData({required this.points, required this.mapConfig});
+
+  final GeoPerspectivePoints points;
+  final GeoPerspectiveMapConfig mapConfig;
+}
+
+Future<_HolePerspectiveData> _loadHolePerspectiveData({
+  required DatosServidorService datosServidorService,
+  required String idCampo,
+  required int holeIndex,
+  required List<GeoPerspectivePoints> fallbackHolePerspectivePoints,
+}) async {
+  final fallbackPoints = _fallbackHolePerspectivePoint(
+    holeIndex,
+    fallbackHolePerspectivePoints,
+  );
+
+  try {
+    final response = await datosServidorService.cojeConfiguracionCampos(
+      idCampo,
+      'georeferencia',
+    );
+    final configuration = _GeoReferenceConfiguration.fromBackendResponse(
+      response,
+    );
+    if (configuration != null) {
+      return _HolePerspectiveData(
+        points: _fallbackHolePerspectivePoint(
+          holeIndex,
+          configuration.holePerspectivePoints,
+          fallback: fallbackPoints,
+        ),
+        mapConfig: configuration.mapConfig,
+      );
+    }
+  } catch (error) {
+    debugPrint('cojeConfiguracionCampos georeferencia error: $error');
+  }
+
+  return _HolePerspectiveData(
+    points: fallbackPoints,
+    mapConfig: defaultGolfPerspectiveMapConfig,
+  );
+}
+
+GeoPerspectivePoints _fallbackHolePerspectivePoint(
+  int holeIndex,
+  List<GeoPerspectivePoints> points, {
+  GeoPerspectivePoints fallback = defaultGolfPerspectivePoints,
+}) {
+  if (holeIndex >= 0 && holeIndex < points.length) {
+    return points[holeIndex];
+  }
+
+  return fallback;
 }
 
 List<_ScoreRowData> _buildGuideRows() {
@@ -3170,6 +3794,10 @@ List<_ScoreRowData> _buildGuideRows() {
       summaryValues: _emptySummary,
     ),
   ];
+}
+
+List<GeoPerspectivePoints> _buildHolePerspectivePoints() {
+  return List.filled(18, defaultGolfPerspectivePoints, growable: false);
 }
 
 List<List<String>> _decodePlayRows(String rawJson) {
