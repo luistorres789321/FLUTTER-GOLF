@@ -561,6 +561,8 @@ class _GolfScorecardScreenState extends State<GolfScorecardScreen> {
           title: 'Mapa Hoyo ${holeIndex + 1}',
           idCampo: widget.idCampo,
           points: perspectiveData.points,
+          holeIndex: holeIndex,
+          allHolePoints: perspectiveData.holePerspectivePoints,
           mapConfig: perspectiveData.mapConfig,
         ),
       ),
@@ -1509,6 +1511,8 @@ class _FullscreenScorecardScreenState
           title: 'Mapa Hoyo ${holeIndex + 1}',
           idCampo: widget.idCampo,
           points: perspectiveData.points,
+          holeIndex: holeIndex,
+          allHolePoints: perspectiveData.holePerspectivePoints,
           mapConfig: perspectiveData.mapConfig,
         ),
       ),
@@ -3553,34 +3557,46 @@ class _GeoReferenceConfiguration {
       return null;
     }
 
+    final imagePixelSize = Size(imageWidth, imageHeight);
+    final transformMap = _jsonMapFromValue(
+      _firstJsonLikeValue(json, ['transformacion', 'transform']),
+    );
+    final photoTransform = _geoPerspectivePhotoTransformFromMap(
+      transformMap: transformMap,
+      imagePixelSize: imagePixelSize,
+      controlPoints: controlPoints,
+    );
     final mapConfig = GeoPerspectiveMapConfig(
       assetImagePath: defaultGolfPerspectiveMapConfig.assetImagePath,
       imageUrl: imageUrl ?? '',
-      imagePixelSize: Size(imageWidth, imageHeight),
+      imagePixelSize: imagePixelSize,
       controlPoints: controlPoints,
+      photoTransform: photoTransform,
     );
     final holesMap = _jsonMapFromValue(_firstJsonLikeValue(json, ['hoyos']));
+    final geoRef = mapConfig.createGeoRef();
     final holePerspectivePoints = List.generate(18, (index) {
       final hole = index + 1;
-      final bottomPixel = _holePixelFromMap(
-        holesMap,
-        prefix: 'salida_roja',
-        hole: hole,
-      );
-      final topPixel = _holePixelFromMap(holesMap, prefix: 'hoyo', hole: hole);
-      if (bottomPixel == null || topPixel == null) {
-        return defaultGolfPerspectivePoints;
-      }
+      final bottomPoint =
+          _holeLatLonFromMap(holesMap, prefix: 'salida_roja', hole: hole) ??
+          _holeLatLonFromPixelMap(
+            holesMap,
+            prefix: 'salida_roja',
+            hole: hole,
+            geoRef: geoRef,
+          );
+      final topPoint =
+          _holeLatLonFromMap(holesMap, prefix: 'hoyo', hole: hole) ??
+          _holeLatLonFromPixelMap(
+            holesMap,
+            prefix: 'hoyo',
+            hole: hole,
+            geoRef: geoRef,
+          );
 
-      try {
-        return mapConfig.pointsFromPixels(
-          bottomPixel: bottomPixel,
-          topPixel: topPixel,
-        );
-      } catch (error) {
-        debugPrint('georeferencia hoyo $hole invalida: $error');
-        return defaultGolfPerspectivePoints;
-      }
+      return bottomPoint == null || topPoint == null
+          ? defaultGolfPerspectivePoints
+          : GeoPerspectivePoints(bottomPoint: bottomPoint, topPoint: topPoint);
     }, growable: false);
 
     return _GeoReferenceConfiguration(
@@ -3625,6 +3641,132 @@ List<GeoControlPoint>? _geoControlPointsFromMaps({
   }
 
   return controlPoints;
+}
+
+GeoPerspectivePhotoTransform? _geoPerspectivePhotoTransformFromMap({
+  required Map<String, dynamic>? transformMap,
+  required Size imagePixelSize,
+  required List<GeoControlPoint> controlPoints,
+}) {
+  if (transformMap == null) {
+    return null;
+  }
+
+  final anchorLat = _firstDoubleValue(transformMap, [
+    'anchorLat',
+    'anchor_lat',
+  ]);
+  final anchorLon = _firstDoubleValue(transformMap, [
+    'anchorLon',
+    'anchorLng',
+    'anchor_lon',
+    'anchor_lng',
+  ]);
+  final anchorZoom = _firstDoubleValue(transformMap, [
+    'anchorZoom',
+    'anchor_zoom',
+  ]);
+  final rotation = _firstDoubleValue(transformMap, ['rotation', 'rotacion']);
+  final scale = _firstDoubleValue(transformMap, ['scale', 'escala']);
+  final displayWidth = _positiveDoubleValue(transformMap, [
+    'displayWidth',
+    'display_width',
+  ]);
+  final displayHeight = _positiveDoubleValue(transformMap, [
+    'displayHeight',
+    'display_height',
+  ]);
+  if (anchorLat == null ||
+      anchorLon == null ||
+      anchorZoom == null ||
+      rotation == null ||
+      scale == null) {
+    return null;
+  }
+
+  final displayPixelSize = displayWidth == null || displayHeight == null
+      ? GeoPerspectivePhotoTransform.inferDisplayPixelSizeFromControls(
+          imagePixelSize: imagePixelSize,
+          controlPoints: controlPoints,
+          anchorPoint: GeoLatLon(lat: anchorLat, lon: anchorLon),
+          anchorZoom: anchorZoom,
+          rotationDegrees: rotation,
+          scale: scale,
+        )
+      : Size(displayWidth, displayHeight);
+
+  if (displayPixelSize == null) {
+    return null;
+  }
+
+  return GeoPerspectivePhotoTransform(
+    anchorPoint: GeoLatLon(lat: anchorLat, lon: anchorLon),
+    anchorZoom: anchorZoom,
+    rotationDegrees: rotation,
+    scale: scale,
+    displayPixelSize: displayPixelSize,
+  );
+}
+
+GeoLatLon? _holeLatLonFromMap(
+  Map<String, dynamic>? map, {
+  required String prefix,
+  required int hole,
+}) {
+  if (map == null) {
+    return null;
+  }
+
+  final lat = _firstDoubleValue(map, [
+    '$prefix${hole}_lat',
+    '$prefix${hole}_latitud',
+    '${prefix}_${hole}_lat',
+    '${prefix}_${hole}_latitud',
+    '$prefix${hole}Lat',
+    '${prefix}_${hole}Lat',
+  ]);
+  final lon = _firstDoubleValue(map, [
+    '$prefix${hole}_lon',
+    '$prefix${hole}_lng',
+    '$prefix${hole}_long',
+    '$prefix${hole}_longitud',
+    '${prefix}_${hole}_lon',
+    '${prefix}_${hole}_lng',
+    '${prefix}_${hole}_long',
+    '${prefix}_${hole}_longitud',
+    '$prefix${hole}Lon',
+    '$prefix${hole}Lng',
+    '${prefix}_${hole}Lon',
+    '${prefix}_${hole}Lng',
+  ]);
+
+  if (lat == null ||
+      lon == null ||
+      !lat.isFinite ||
+      !lon.isFinite ||
+      lat < -90 ||
+      lat > 90 ||
+      lon < -180 ||
+      lon > 180) {
+    return null;
+  }
+
+  if (lat == 0 && lon == 0) {
+    return null;
+  }
+
+  return GeoLatLon(lat: lat, lon: lon);
+}
+
+GeoLatLon? _holeLatLonFromPixelMap(
+  Map<String, dynamic>? map, {
+  required String prefix,
+  required int hole,
+  required GeoRef geoRef,
+}) {
+  final pixel = _holePixelFromMap(map, prefix: prefix, hole: hole);
+
+  return pixel == null ? null : geoRef.pixelToLatLon(pixel);
 }
 
 Offset? _holePixelFromMap(
@@ -3693,9 +3835,14 @@ String? _stringFromJsonLikeValue(Object? value) {
 }
 
 class _HolePerspectiveData {
-  const _HolePerspectiveData({required this.points, required this.mapConfig});
+  const _HolePerspectiveData({
+    required this.points,
+    required this.holePerspectivePoints,
+    required this.mapConfig,
+  });
 
   final GeoPerspectivePoints points;
+  final List<GeoPerspectivePoints> holePerspectivePoints;
   final GeoPerspectiveMapConfig mapConfig;
 }
 
@@ -3725,6 +3872,7 @@ Future<_HolePerspectiveData> _loadHolePerspectiveData({
           configuration.holePerspectivePoints,
           fallback: fallbackPoints,
         ),
+        holePerspectivePoints: configuration.holePerspectivePoints,
         mapConfig: configuration.mapConfig,
       );
     }
@@ -3734,6 +3882,7 @@ Future<_HolePerspectiveData> _loadHolePerspectiveData({
 
   return _HolePerspectiveData(
     points: fallbackPoints,
+    holePerspectivePoints: fallbackHolePerspectivePoints,
     mapConfig: defaultGolfPerspectiveMapConfig,
   );
 }
