@@ -161,6 +161,19 @@ class DatosServidorService {
     });
   }
 
+  Future<String> detectaPresenciaEnCampo({
+    required String dia,
+    required String idUsuario,
+    String idCampo = '1',
+  }) {
+    return _getTexto({
+      'accion': 'detecta_presencia_en_campo',
+      'dia': dia,
+      'idUsuario': idUsuario,
+      'idCampo': idCampo,
+    });
+  }
+
   Future<String> registraClaveFmc({
     required String idDispositivo,
     required String clave,

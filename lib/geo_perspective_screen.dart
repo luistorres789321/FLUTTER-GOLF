@@ -641,6 +641,7 @@ class GeoPerspectiveScreen extends StatefulWidget {
     this.allHolePoints = const [],
     this.mapConfig = defaultGolfPerspectiveMapConfig,
     this.initialTiltDegrees = 55,
+    this.initialViewBottomPoint,
   });
 
   final String title;
@@ -650,6 +651,7 @@ class GeoPerspectiveScreen extends StatefulWidget {
   final List<GeoPerspectivePoints> allHolePoints;
   final GeoPerspectiveMapConfig mapConfig;
   final double initialTiltDegrees;
+  final GeoLatLon? initialViewBottomPoint;
 
   @override
   State<GeoPerspectiveScreen> createState() => _GeoPerspectiveScreenState();
@@ -679,6 +681,13 @@ class _GeoPerspectiveScreenState extends State<GeoPerspectiveScreen> {
     _tiltDegrees = widget.initialTiltDegrees;
     _activePoints = widget.points;
     _activeHoleIndex = widget.holeIndex;
+    _testViewBottomPoint = widget.initialViewBottomPoint;
+    final initialViewBottomPoint = _testViewBottomPoint;
+    if (initialViewBottomPoint != null) {
+      _anchorInsetFraction = geoPerspectiveAnchorInsetFractionForDistance(
+        geoDistanceMeters(initialViewBottomPoint, _activePoints.topPoint),
+      );
+    }
   }
 
   @override

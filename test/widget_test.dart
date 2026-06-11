@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_golf/app_globals.dart';
 import 'package:flutter_golf/golf_scorecard_screen.dart';
 import 'package:flutter_golf/main.dart';
 import 'package:flutter_golf/services/datos_servidor_service.dart';
@@ -26,6 +27,69 @@ void main() {
     expect(find.text('Guardar informacion'), findsOneWidget);
     expect(find.text('Recuperar Ronda'), findsNothing);
   });
+
+  testWidgets(
+    'triple tapping registration logo loads and saves an existing mobile user',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final requests = <Uri>[];
+      await tester.pumpWidget(
+        GolfScorecardApp(
+          datosServidorService: _existingFieldsService(
+            existingAlias: true,
+            existingMail: true,
+            requests: requests,
+            movilUsuarioExists: true,
+            movilUsuarioId: '777',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(_logoFinder());
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.tap(_logoFinder());
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.tap(_logoFinder());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cargar usuario de prueba'), findsOneWidget);
+      final dialogMobileField = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(dialogMobileField, '611222333');
+      await tester.tap(find.widgetWithText(FilledButton, 'Buscar'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Alias Backend'), findsOneWidget);
+      expect(find.text('Nombre Backend'), findsOneWidget);
+      expect(find.text('Apellidos Backend'), findsOneWidget);
+      expect(find.text('backend@example.com'), findsOneWidget);
+
+      await tester.dragUntilVisible(
+        find.text('Guardar informacion'),
+        find.byType(SingleChildScrollView),
+        const Offset(0, -120),
+      );
+      await tester.tap(find.text('Guardar informacion'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tarjeta de golf'), findsOneWidget);
+      final editaUsuarioUri = requests.firstWhere(
+        (uri) => uri.queryParameters['accion'] == 'edita_usuario_golf',
+      );
+      expect(editaUsuarioUri.queryParameters, containsPair('idUsuario', '777'));
+
+      final actions = requests.map((uri) => uri.queryParameters['accion']);
+      expect(actions, contains('ya_existe_movil_usuario'));
+      expect(actions, isNot(contains('obtener_usuario_golf')));
+      final usuarioUri = requests.firstWhere(
+        (uri) => uri.queryParameters['accion'] == 'ya_existe_movil_usuario',
+      );
+      expect(usuarioUri.queryParameters, containsPair('movil', '611222333'));
+    },
+  );
 
   testWidgets('cancelling initial user registration closes the app', (
     WidgetTester tester,
@@ -1400,6 +1464,145 @@ void main() {
     );
   });
 
+  testWidgets('shows presence slider when opening statistics scorecard', (
+    WidgetTester tester,
+  ) async {
+    modo_pruebas = 'si';
+    horaActual = '';
+    addTearDown(() {
+      horaActual = '';
+    });
+
+    final requests = <Uri>[];
+    final roundRows = jsonEncode([
+      {
+        'idUsuario': '123',
+        'jugador': 'Auto',
+        'modificado': '260505101501',
+        for (var hole = 1; hole <= 18; hole++) 'hoyo_$hole': '4',
+      },
+    ]);
+    final allGamesResponse = jsonEncode({
+      'partidas': [
+        {'idPartida': 'STATS1', 'dia': '260505', 'json_partida': roundRows},
+      ],
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'saved_user_information_json': _userInformationJson(),
+      'saved_user_registered': true,
+    });
+    await tester.pumpWidget(
+      GolfScorecardApp(
+        datosServidorService: _existingFieldsService(
+          requests: requests,
+          scorecardConfigurationResponse: _scorecardConfigurationResponse(
+            List.filled(18, 3),
+          ),
+          allGamesResponse: allGamesResponse,
+          detectaPresenciaResponse: jsonEncode({
+            'rpta': 'ok',
+            'fecha_desde': '260505090000',
+            'fecha_hasta': '260505100000',
+            'hora_desde': '090000',
+            'hora_hasta': '100000',
+            'ptos': [
+              {
+                'lat': 41.647071255405606,
+                'lon': 1.0038098075029893,
+                'precision': 8,
+                'fecha': '260505091500',
+              },
+              {
+                'lat': 41.647171255405606,
+                'lon': 1.0039098075029893,
+                'precision': 12,
+                'fecha': '260505093000',
+              },
+              {
+                'lat': 41.647271255405606,
+                'lon': 1.0040098075029893,
+                'precision': 7,
+                'fecha': '260505094500',
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Estadisticas'));
+    await tester.tap(find.text('Estadisticas'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.visibility));
+    await tester.pumpAndSettle();
+
+    final presenceUri = requests.firstWhere(
+      (uri) => uri.queryParameters['accion'] == 'detecta_presencia_en_campo',
+    );
+    expect(presenceUri.queryParameters, {
+      'accion': 'detecta_presencia_en_campo',
+      'dia': '260505',
+      'idUsuario': '123',
+      'idCampo': '1',
+    });
+    expect(find.text('Hora actual'), findsOneWidget);
+    expect(find.text('09:00:00'), findsWidgets);
+    expect(find.text('10:00:00'), findsOneWidget);
+    expect(horaActual, '090000');
+    expect(find.byKey(const ValueKey('presence_map_icon')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('presence_point_marker_33300')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('presence_point_marker_34200')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('presence_point_marker_35100')),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('presence_slider_next_button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('presence_slider_next_button')));
+    await tester.pump();
+
+    expect(find.text('09:15:00'), findsOneWidget);
+    expect(horaActual, '091500');
+    expect(find.byKey(const ValueKey('presence_map_icon')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('presence_slider_next_button')));
+    await tester.pump();
+
+    expect(find.text('09:45:00'), findsOneWidget);
+    expect(horaActual, '094500');
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('presence_slider_previous_button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('presence_slider_previous_button')),
+    );
+    await tester.pump();
+
+    expect(find.text('09:15:00'), findsOneWidget);
+    expect(horaActual, '091500');
+
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChanged!(34200);
+    await tester.pump();
+
+    expect(find.text('09:30:00'), findsOneWidget);
+    expect(horaActual, '093000');
+    expect(find.byKey(const ValueKey('presence_map_icon')), findsNothing);
+  });
+
   testWidgets('allows rotation in statistics and scorecard screens', (
     WidgetTester tester,
   ) async {
@@ -2023,6 +2226,19 @@ void main() {
     expect(find.text('EQUIPO'), findsNothing);
     expect(find.text('Signatures'), findsNothing);
     expect(find.text('Jugadores'), findsNothing);
+
+    await tester.enterText(find.byType(TextField).first, '5');
+    await tester.pumpAndSettle();
+
+    final annotationUri = requests.lastWhere(
+      (uri) => uri.queryParameters['accion'] == 'anota_json_hoyos',
+    );
+    final rows =
+        jsonDecode(annotationUri.queryParameters['json_hoyos']!) as List;
+    final firstRow = rows.first as Map<String, dynamic>;
+    expect(firstRow, containsPair('hoyo_1', '5'));
+    expect(firstRow['hoyo_1_hora'], matches(RegExp(r'^\d{2}:\d{2}$')));
+    expect(firstRow, containsPair('hoyo_2_hora', ''));
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Darme de baja'));
     await tester.pumpAndSettle();
@@ -3511,6 +3727,7 @@ void main() {
     expect(rows, hasLength(1));
     expect(rows.single, containsPair('idUsuario', '123'));
     expect(rows.single, containsPair('hoyo_1', '4'));
+    expect(rows.single, containsPair('hoyo_1_hora', ''));
   });
 
   testWidgets(
@@ -3982,7 +4199,7 @@ void main() {
 
       expect(
         find.text(
-          'este movil ya existe, se sobreescribiran los datos de usuario',
+          'Ya existe ese movil, quieres sobreescribir la informacion ?',
         ),
         findsOneWidget,
       );
@@ -3995,7 +4212,7 @@ void main() {
         isNot(contains('edita_usuario_golf')),
       );
 
-      await tester.tap(find.text('Adelante'));
+      await tester.tap(find.text('Si'));
       await tester.pumpAndSettle();
 
       expect(find.text('Tarjeta de golf'), findsOneWidget);
@@ -4052,13 +4269,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        'este movil ya existe, se sobreescribiran los datos de usuario',
-      ),
+      find.text('Ya existe ese movil, quieres sobreescribir la informacion ?'),
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Cancela'));
+    await tester.tap(find.text('No'));
     await tester.pumpAndSettle();
 
     expect(find.text('Alta de usuario'), findsOneWidget);
@@ -4166,19 +4381,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        'este movil ya existe, se sobreescribiran los datos de usuario',
-      ),
+      find.text('Ya existe ese movil, quieres sobreescribir la informacion ?'),
       findsOneWidget,
     );
-    expect(find.text('Adelante'), findsOneWidget);
-    expect(find.text('Cancela'), findsOneWidget);
+    expect(find.text('Si'), findsOneWidget);
+    expect(find.text('No'), findsOneWidget);
     expect(
       requests.map((uri) => uri.queryParameters['accion']),
       isNot(contains('edita_usuario_golf')),
     );
 
-    await tester.tap(find.text('Adelante'));
+    await tester.tap(find.text('Si'));
     await tester.pumpAndSettle();
 
     final editaUsuarioUri = requests.firstWhere(
@@ -4227,13 +4440,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        'este movil ya existe, se sobreescribiran los datos de usuario',
-      ),
+      find.text('Ya existe ese movil, quieres sobreescribir la informacion ?'),
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Cancela'));
+    await tester.tap(find.text('No'));
     await tester.pumpAndSettle();
 
     expect(find.text('Mi Informacion'), findsOneWidget);
@@ -4573,6 +4784,7 @@ DatosServidorService _existingFieldsService({
   String? scorecardConfigurationResponse,
   String allGamesResponse = '{"partidas":[]}',
   int allGamesStatusCode = 200,
+  String detectaPresenciaResponse = '{"rpta":"no"}',
   String leaguesResponse = '[]',
   int leaguesStatusCode = 200,
   String pendingInvitationsResponse = "{'invitaciones':0,'liguillas':[]}",
@@ -4609,6 +4821,18 @@ DatosServidorService _existingFieldsService({
           jsonEncode({
             'rpta': movilUsuarioExists ? 'si' : 'no',
             if (movilUsuarioExists) 'idUsuario': movilUsuarioId,
+            if (movilUsuarioExists) 'alias': 'Alias Backend',
+            if (movilUsuarioExists) 'nombre': 'Nombre Backend',
+            if (movilUsuarioExists) 'apellidos': 'Apellidos Backend',
+            if (movilUsuarioExists) 'direccion': 'Calle Backend 1',
+            if (movilUsuarioExists) 'cp': '08001',
+            if (movilUsuarioExists) 'poblacion': 'Barcelona',
+            if (movilUsuarioExists) 'provincia': 'Barcelona',
+            if (movilUsuarioExists)
+              'movil': request.url.queryParameters['movil'] ?? '',
+            if (movilUsuarioExists) 'mail': 'backend@example.com',
+            if (movilUsuarioExists) 'numero_federado_golf': 'GOLF777',
+            if (movilUsuarioExists) 'numero_federado_pitchput': 'PP777',
           }),
           200,
         );
@@ -4759,6 +4983,10 @@ DatosServidorService _existingFieldsService({
 
       if (accion == 'obtener_todas_las_partidas') {
         return http.Response(allGamesResponse, allGamesStatusCode);
+      }
+
+      if (accion == 'detecta_presencia_en_campo') {
+        return http.Response(detectaPresenciaResponse, 200);
       }
 
       final exists = switch (accion) {
