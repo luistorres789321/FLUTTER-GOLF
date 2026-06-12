@@ -1621,6 +1621,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         initialInformation: userInformation,
         datosServidorService: _datosServidorService,
         onSave: _saveUserInformation,
+        showBackButton: userInformation != null,
         onCancel: _cancelUserInformationEditing,
       );
     }
@@ -8118,6 +8119,7 @@ class _UserInformationScreen extends StatefulWidget {
     required this.initialInformation,
     required this.datosServidorService,
     required this.onSave,
+    this.showBackButton = false,
     this.onCancel,
   });
 
@@ -8129,6 +8131,7 @@ class _UserInformationScreen extends StatefulWidget {
     String idUsuario,
   })
   onSave;
+  final bool showBackButton;
   final VoidCallback? onCancel;
 
   @override
@@ -8798,7 +8801,8 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (widget.onCancel != null) ...[
+                          if (widget.showBackButton &&
+                              widget.onCancel != null) ...[
                             _TopLeftBackButton(
                               onPressed: _isSaving ? null : widget.onCancel,
                             ),

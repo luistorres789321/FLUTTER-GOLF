@@ -115,7 +115,7 @@ class GolfScorecardScreen extends StatefulWidget {
 
   static const double _labelWidth = 180;
   static const double _holeWidth = 48;
-  static const double _subtotalWidth = 64;
+  static const double _subtotalWidth = 78;
   static const double _foldWidth = 0;
   static const double _summaryWidth = 82;
   static const double _cardHorizontalPadding = 48;
@@ -2804,7 +2804,7 @@ class _GridPlayBody extends StatelessWidget {
               child: isEditable
                   ? _NumericGridInput(
                       initialValue: entry.value,
-                      enabled: true,
+                      enabled: _scoreInputIsEnabled(frontValues, entry.key),
                       onChanged: (value) =>
                           onValueChanged(rowIndex, entry.key, value),
                     )
@@ -2813,7 +2813,7 @@ class _GridPlayBody extends StatelessWidget {
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
             tone: tone,
-            child: _ValueText(frontTotal),
+            child: _PlayerSubtotalText(frontTotal, scoreValues: frontValues),
           ),
           const _FoldCell(),
           for (final entry in backValues.asMap().entries)
@@ -2830,7 +2830,7 @@ class _GridPlayBody extends StatelessWidget {
               child: isEditable
                   ? _NumericGridInput(
                       initialValue: entry.value,
-                      enabled: true,
+                      enabled: _scoreInputIsEnabled(backValues, entry.key),
                       onChanged: (value) =>
                           onValueChanged(rowIndex, entry.key + 9, value),
                     )
@@ -2839,7 +2839,7 @@ class _GridPlayBody extends StatelessWidget {
           _GridCell.data(
             width: GolfScorecardScreen._subtotalWidth,
             tone: tone,
-            child: _ValueText(backTotal),
+            child: _PlayerSubtotalText(backTotal, scoreValues: backValues),
           ),
           _GridCell.summary(
             width: GolfScorecardScreen._summaryWidth,
@@ -2992,6 +2992,14 @@ String _holeValue(List<String> values, int holeIndex) {
   return holeIndex < values.length ? values[holeIndex] : '';
 }
 
+bool _scoreInputIsEnabled(List<String> values, int holeIndex) {
+  if (holeIndex <= 0) {
+    return true;
+  }
+
+  return _holeValue(values, holeIndex - 1).trim().isNotEmpty;
+}
+
 String _sumScoreValues(Iterable<String> values) {
   var total = 0;
   var hasValue = false;
@@ -3007,6 +3015,30 @@ String _sumScoreValues(Iterable<String> values) {
   }
 
   return hasValue ? '$total' : '';
+}
+
+int? _scoreSubtotalDifferenceValue(String value, Iterable<String> scoreValues) {
+  final strokes = int.tryParse(value.trim());
+  if (strokes == null) {
+    return null;
+  }
+
+  final filledHoleCount = scoreValues
+      .where((scoreValue) => scoreValue.trim().isNotEmpty)
+      .length;
+  if (filledHoleCount == 0) {
+    return null;
+  }
+
+  return strokes - (filledHoleCount * 3);
+}
+
+String _scoreSubtotalDifferenceLabel(int difference) {
+  return difference > 0 ? '+$difference' : '$difference';
+}
+
+Color _scoreSubtotalDifferenceColor(int difference) {
+  return difference > 0 ? const Color(0xFF8B1E1E) : const Color(0xFF17623A);
 }
 
 class _MarkerStrip extends StatelessWidget {
@@ -3388,6 +3420,48 @@ class _ValueText extends StatelessWidget {
 
     return Text(
       value,
+      textAlign: TextAlign.center,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+class _PlayerSubtotalText extends StatelessWidget {
+  const _PlayerSubtotalText(this.value, {required this.scoreValues});
+
+  final String value;
+  final Iterable<String> scoreValues;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtotal = value.trim();
+    if (subtotal.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final difference = _scoreSubtotalDifferenceValue(subtotal, scoreValues);
+    if (difference == null) {
+      return _ValueText(subtotal);
+    }
+    final differenceLabel = _scoreSubtotalDifferenceLabel(difference);
+
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: subtotal,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          TextSpan(
+            text: ' ($differenceLabel)',
+            style: TextStyle(
+              color: _scoreSubtotalDifferenceColor(difference),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
       textAlign: TextAlign.center,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,

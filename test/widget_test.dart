@@ -25,6 +25,8 @@ void main() {
     expect(find.text('Alias'), findsOneWidget);
     expect(_logoFinder(), findsOneWidget);
     expect(find.text('Guardar informacion'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Volver'), findsNothing);
+    expect(find.widgetWithText(OutlinedButton, 'Cancelar'), findsOneWidget);
     expect(find.text('Recuperar Ronda'), findsNothing);
   });
 
@@ -2796,21 +2798,33 @@ void main() {
     expect(_horizontalScrollAncestorOfButton('Salir'), findsNothing);
     expect(find.byKey(const ValueKey('scorecard_pair_icon')), findsOneWidget);
     expect(find.textContaining('"hoyo_1"'), findsNothing);
-    expect(find.text('45'), findsOneWidget);
-    expect(find.text('36'), findsNWidgets(2));
-    expect(find.text('126'), findsOneWidget);
+    expect(find.text('45 (+18)'), findsOneWidget);
+    expect(find.text('36 (+9)'), findsNWidgets(2));
+    expect(find.text('126 (+99)'), findsOneWidget);
     expect(find.text('171'), findsOneWidget);
     expect(find.text('72'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(1), '');
+    await tester.pump();
+
+    expect(find.text('45 (+18)'), findsNothing);
+    expect(find.text('43 (+19)'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(1), '2');
+    await tester.pump();
+
+    expect(find.text('43 (+19)'), findsNothing);
+    expect(find.text('45 (+18)'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, '5');
     await tester.pump();
 
-    expect(find.text('45'), findsNothing);
-    expect(find.text('49'), findsOneWidget);
+    expect(find.text('45 (+18)'), findsNothing);
+    expect(find.text('49 (+22)'), findsOneWidget);
     expect(find.text('171'), findsNothing);
     expect(find.text('175'), findsOneWidget);
-    expect(find.text('126'), findsOneWidget);
-    expect(find.text('36'), findsNWidgets(2));
+    expect(find.text('126 (+99)'), findsOneWidget);
+    expect(find.text('36 (+9)'), findsNWidgets(2));
     expect(find.text('72'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, '123');
@@ -2858,6 +2872,98 @@ void main() {
       focusedScoreField.controller?.selection,
       const TextSelection(baseOffset: 0, extentOffset: 2),
     );
+  });
+
+  testWidgets('requires previous hole annotation within each scorecard half', (
+    WidgetTester tester,
+  ) async {
+    final values = List<String>.filled(18, '');
+    final playRow = jsonEncode({
+      'idUsuario': '123',
+      'jugador': 'Auto',
+      'modificado': '',
+      for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+        'hoyo_${holeIndex + 1}': values[holeIndex],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '1',
+          initialPlayRowsJson: '[$playRow]',
+          datosServidorService: _existingFieldsService(
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    TextField scoreField(int hole) {
+      return tester.widget<TextField>(find.byType(TextField).at(hole - 1));
+    }
+
+    expect(scoreField(1).enabled, isTrue);
+    expect(scoreField(2).enabled, isFalse);
+    expect(scoreField(10).enabled, isTrue);
+    expect(scoreField(11).enabled, isFalse);
+
+    await tester.enterText(find.byType(TextField).at(0), '4');
+    await tester.enterText(find.byType(TextField).at(9), '5');
+    await tester.pump();
+
+    expect(scoreField(2).enabled, isTrue);
+    expect(scoreField(11).enabled, isTrue);
+  });
+
+  testWidgets('colors scorecard subtotal difference by sign', (
+    WidgetTester tester,
+  ) async {
+    final values = [
+      ...List<String>.filled(9, '4'),
+      ...List<String>.filled(9, '3'),
+    ];
+    final playRow = jsonEncode({
+      'idUsuario': '123',
+      'jugador': 'Auto',
+      'modificado': '',
+      for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+        'hoyo_${holeIndex + 1}': values[holeIndex],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GolfScorecardScreen(
+          idPartida: 'PARTIDA123',
+          jugadores: '1',
+          initialPlayRowsJson: '[$playRow]',
+          datosServidorService: _existingFieldsService(
+            scorecardConfigurationResponse: _scorecardConfigurationResponse(
+              List.filled(18, 3),
+            ),
+          ),
+          onExit: () {},
+          onLeaveGame: () async {},
+          onDestroyGame: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    TextStyle? parentheticalStyle(String text) {
+      final subtotalText = tester.widget<Text>(find.text(text));
+      final span = subtotalText.textSpan! as TextSpan;
+      return (span.children![1] as TextSpan).style;
+    }
+
+    expect(parentheticalStyle('36 (+9)')?.color, const Color(0xFF8B1E1E));
+    expect(parentheticalStyle('27 (0)')?.color, const Color(0xFF17623A));
   });
 
   testWidgets('keeps scorecard player column fixed during horizontal scroll', (
@@ -4751,6 +4857,7 @@ void main() {
     await tester.tap(find.text('Mi Informacion'));
     await tester.pumpAndSettle();
 
+    expect(find.widgetWithText(OutlinedButton, 'Volver'), findsOneWidget);
     expect(find.text('Cancelar'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Cancelar'));
