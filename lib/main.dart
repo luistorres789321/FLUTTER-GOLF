@@ -12,6 +12,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_globals.dart';
 import 'firebase_options.dart';
 import 'golf_scorecard_screen.dart';
 import 'services/datos_servidor_service.dart';
@@ -317,6 +318,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   static const _defaultFieldId = '1';
   static const _jsonHoyosPollDelay = Duration(seconds: 5);
   static const _positionTransmissionDelay = Duration(seconds: 20);
+  static const _globalPositionDistanceFilterMeters = 1;
   static const _pendingInvitationPollDelay = Duration(seconds: 6);
   static const _invitationGameLifetime = Duration(hours: 2);
 
@@ -325,10 +327,12 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   int _jsonHoyosPollingGeneration = 0;
   Timer? _jsonHoyosPollingTimer;
   Timer? _positionTransmissionTimer;
+  StreamSubscription<Position>? _globalPositionSubscription;
   Timer? _pendingInvitationPollingTimer;
   Timer? _leagueButtonBlinkTimer;
   bool _isAppVisible = true;
   bool _isTransmittingPosition = false;
+  bool _isStartingGlobalPositionTracking = false;
   bool _isCheckingPendingLeagueInvitations = false;
   bool _leagueButtonBlinkOn = false;
   bool _isLoading = true;
@@ -353,6 +357,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     _ownsDatosServidorService = widget.datosServidorService == null;
     _datosServidorService =
         widget.datosServidorService ?? DatosServidorService();
+    unawaited(_startGlobalPositionTrackingIfPossible());
     _loadSavedGame();
   }
 
@@ -360,6 +365,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopJsonHoyosPolling();
+    _stopGlobalPositionTracking();
     _stopPositionTransmission();
     _stopPendingInvitationPolling();
     _stopLeagueButtonBlink(updateState: false);
@@ -373,10 +379,12 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isAppVisible = state == AppLifecycleState.resumed;
     if (_isAppVisible) {
+      unawaited(_startGlobalPositionTrackingIfPossible());
       _startPositionTransmissionIfNeeded();
       _startPendingInvitationPollingIfNeeded();
       _syncLeagueButtonBlinkTimer();
     } else {
+      _stopGlobalPositionTracking();
       _stopPositionTransmission();
       _stopPendingInvitationPolling();
       _stopLeagueButtonBlink();
@@ -541,6 +549,96 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     }
 
     return _userInformation?.idUsuario.trim() ?? '';
+  }
+
+  Future<void> _startGlobalPositionTrackingIfPossible() async {
+    if (!_isAppVisible ||
+        _globalPositionSubscription != null ||
+        _isStartingGlobalPositionTracking) {
+      return;
+    }
+
+    _isStartingGlobalPositionTracking = true;
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever ||
+          !_isAppVisible ||
+          !mounted) {
+        return;
+      }
+
+      const locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: _globalPositionDistanceFilterMeters,
+      );
+      _globalPositionSubscription =
+          Geolocator.getPositionStream(
+            locationSettings: locationSettings,
+          ).listen(
+            _updateLatLonActual,
+            onError: (Object error) {
+              debugPrint('stream posicion GPS fallo: $error');
+              _stopGlobalPositionTracking();
+            },
+          );
+
+      unawaited(_refreshLatLonActualOnce());
+    } catch (error) {
+      debugPrint('iniciar seguimiento GPS fallo: $error');
+    } finally {
+      _isStartingGlobalPositionTracking = false;
+    }
+  }
+
+  Future<void> _refreshLatLonActualOnce() async {
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      _updateLatLonActual(position);
+    } catch (error) {
+      debugPrint('lectura GPS inicial fallo: $error');
+    }
+  }
+
+  void _updateLatLonActual(Position position) {
+    final lat = position.latitude;
+    final lon = position.longitude;
+    final precisionMetros = position.accuracy;
+    if (!lat.isFinite ||
+        !lon.isFinite ||
+        !precisionMetros.isFinite ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180) {
+      return;
+    }
+
+    latlonActual = LatLonActual(
+      lat: lat,
+      lon: lon,
+      precisionMetros: precisionMetros,
+      horaLectura: position.timestamp.toLocal(),
+    );
+  }
+
+  void _stopGlobalPositionTracking() {
+    _globalPositionSubscription?.cancel();
+    _globalPositionSubscription = null;
   }
 
   void _startPositionTransmissionIfNeeded() {
@@ -732,6 +830,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
           timeLimit: Duration(seconds: 10),
         ),
       );
+      _updateLatLonActual(position);
       return _GolfPositionPayload.fromPosition(position);
     } catch (error) {
       debugPrint('obtener posicion fallo: $error');
@@ -1495,6 +1594,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
     if (_activeSession case final session?) {
       return GolfScorecardScreen(
         idPartida: session.idPartida,
+        idCampo: session.idCampo,
         jugadores: session.jugadores,
         initialPlayRowsJson: session.playRowsJson,
         differentRemotePlayRowsJson: _differentRemotePlayRowsJson,
@@ -1521,6 +1621,7 @@ class _GolfAppHomeState extends State<GolfAppHome> with WidgetsBindingObserver {
         initialInformation: userInformation,
         datosServidorService: _datosServidorService,
         onSave: _saveUserInformation,
+        showBackButton: userInformation != null,
         onCancel: _cancelUserInformationEditing,
       );
     }
@@ -1908,6 +2009,49 @@ class _GolfLogo extends StatelessWidget {
   }
 }
 
+class _TestMobileLookupDialog extends StatefulWidget {
+  const _TestMobileLookupDialog();
+
+  @override
+  State<_TestMobileLookupDialog> createState() =>
+      _TestMobileLookupDialogState();
+}
+
+class _TestMobileLookupDialogState extends State<_TestMobileLookupDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Cargar usuario de prueba'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.phone,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: const InputDecoration(labelText: 'Movil'),
+        onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Buscar'),
+        ),
+      ],
+    );
+  }
+}
+
 class _TopLeftBackButton extends StatelessWidget {
   const _TopLeftBackButton({required this.onPressed, this.label = 'Volver'});
 
@@ -2105,6 +2249,11 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
   }
 
   Future<void> _openRoundScorecard(_StatisticsRound round) async {
+    final presenceRange = await _detectPresenceRangeForRound(round);
+    if (!mounted) {
+      return;
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => GolfScorecardScreen(
@@ -2120,12 +2269,99 @@ class _StatisticsScreenState extends State<_StatisticsScreen> {
           onLeaveGame: () async {},
           onDestroyGame: () async {},
           isReadOnly: true,
+          presenceRange: presenceRange,
         ),
       ),
     );
     if (mounted) {
       unawaited(_allowStatisticsOrientations());
     }
+  }
+
+  Future<ScorecardPresenceRange?> _detectPresenceRangeForRound(
+    _StatisticsRound round,
+  ) async {
+    if (!modoPruebasActivo ||
+        round.presenceDay.isEmpty ||
+        widget.idUsuario.trim().isEmpty) {
+      return null;
+    }
+
+    try {
+      final response = await widget.datosServidorService
+          .detectaPresenciaEnCampo(
+            dia: round.presenceDay,
+            idUsuario: widget.idUsuario,
+            idCampo: '1',
+          );
+      final rpta = (_backendResponseField(response, 'rpta') ?? '')
+          .trim()
+          .toLowerCase();
+      if (rpta.isNotEmpty && rpta != 'ok') {
+        debugPrint('detectaPresenciaEnCampo sin presencia: $response');
+        return null;
+      }
+
+      final fechaDesde =
+          _backendResponseField(response, 'fecha_desde') ??
+          _backendResponseField(response, 'fechaDesde') ??
+          _backendResponseField(response, 'hora_desde') ??
+          '';
+      final fechaHasta =
+          _backendResponseField(response, 'fecha_hasta') ??
+          _backendResponseField(response, 'fechaHasta') ??
+          _backendResponseField(response, 'hora_hasta') ??
+          '';
+      final range = ScorecardPresenceRange(
+        fechaDesde: fechaDesde,
+        fechaHasta: fechaHasta,
+        puntos: _presencePointsFromResponse(response),
+      );
+      return range.isValid ? range : null;
+    } catch (error) {
+      debugPrint('detectaPresenciaEnCampo fallo: $error');
+      return null;
+    }
+  }
+
+  List<ScorecardPresencePoint> _presencePointsFromResponse(String response) {
+    final decoded = _decodeJsonLikePayload(response.trim());
+    if (decoded is! Map) {
+      return const [];
+    }
+
+    final map = _stringKeyedMap(decoded);
+    final rows = _decodeMapRows(map['ptos'] ?? map['puntos'], 0) ?? const [];
+
+    return [for (final row in rows) ?_presencePointFromMap(row)];
+  }
+
+  ScorecardPresencePoint? _presencePointFromMap(Map<String, dynamic> map) {
+    final lat = _doubleFromBackendValue(map['lat']);
+    final lon = _doubleFromBackendValue(map['lon']);
+    final precision = _doubleFromBackendValue(map['precision']);
+    final fecha = '${map['fecha'] ?? ''}'.trim();
+
+    if (lat == null ||
+        lon == null ||
+        precision == null ||
+        fecha.isEmpty ||
+        !lat.isFinite ||
+        !lon.isFinite ||
+        !precision.isFinite ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180) {
+      return null;
+    }
+
+    return ScorecardPresencePoint(
+      lat: lat,
+      lon: lon,
+      precision: precision,
+      fecha: fecha,
+    );
   }
 
   @override
@@ -7883,6 +8119,7 @@ class _UserInformationScreen extends StatefulWidget {
     required this.initialInformation,
     required this.datosServidorService,
     required this.onSave,
+    this.showBackButton = false,
     this.onCancel,
   });
 
@@ -7894,6 +8131,7 @@ class _UserInformationScreen extends StatefulWidget {
     String idUsuario,
   })
   onSave;
+  final bool showBackButton;
   final VoidCallback? onCancel;
 
   @override
@@ -7908,6 +8146,9 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
   late final Map<String, TextEditingController> _controllers;
   bool _isSaving = false;
   String? _serverValidationError;
+  String _loadedUserId = '';
+  int _testLogoTapCount = 0;
+  DateTime? _lastTestLogoTapAt;
 
   @override
   void initState() {
@@ -7956,7 +8197,10 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
     final hasLocalErrors = !_formKey.currentState!.validate();
     final information = _currentInformation;
-    final backendFieldsToValidate = _backendFieldsWithoutLocalErrors();
+    var backendFieldsToValidate = _backendFieldsWithoutLocalErrors();
+    var saveTarget = _UserBackendSaveTarget(
+      idUsuario: information.idUsuario.trim(),
+    );
 
     if (backendFieldsToValidate.isEmpty) {
       if (hasLocalErrors) {
@@ -7971,6 +8215,26 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
     Map<String, String> backendErrors;
     try {
+      if (!hasLocalErrors) {
+        final resolvedSaveTarget = await _userIdForMobileBeforeSave(
+          information,
+        );
+        if (!mounted) {
+          return;
+        }
+        if (resolvedSaveTarget == null) {
+          setState(() {
+            _isSaving = false;
+          });
+          return;
+        }
+
+        saveTarget = resolvedSaveTarget;
+        if (saveTarget.skipUniqueValidation) {
+          backendFieldsToValidate = {};
+        }
+      }
+
       backendErrors = await _validateUniqueBackendFields(
         information,
         backendFieldsToValidate,
@@ -8008,7 +8272,7 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       return;
     }
 
-    final registration = await _saveUserInBackend(information);
+    final registration = await _saveUserInBackend(information, saveTarget);
     if (!mounted) {
       return;
     }
@@ -8036,7 +8300,9 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
   _UserInformation get _currentInformation {
     return _UserInformation(
-      idUsuario: widget.initialInformation?.idUsuario ?? '',
+      idUsuario: _loadedUserId.isNotEmpty
+          ? _loadedUserId
+          : widget.initialInformation?.idUsuario ?? '',
       alias: _text('alias'),
       nombre: _text('nombre'),
       apellidos: _text('apellidos'),
@@ -8183,13 +8449,11 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
   Future<_UserRegistrationResult?> _saveUserInBackend(
     _UserInformation information,
+    _UserBackendSaveTarget saveTarget,
   ) async {
     var operation = 'altaUsuario';
     try {
-      final editUserId = await _userIdForMobileBeforeSave(information);
-      if (editUserId == null) {
-        return null;
-      }
+      final editUserId = saveTarget.idUsuario;
 
       if (editUserId.isNotEmpty) {
         operation = 'editaUsuario';
@@ -8239,7 +8503,106 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
     }
   }
 
-  Future<String?> _userIdForMobileBeforeSave(
+  Future<void> _handleTestLogoTap() async {
+    if (!modoPruebasActivo || _isSaving) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final lastTapAt = _lastTestLogoTapAt;
+    _lastTestLogoTapAt = now;
+    if (lastTapAt == null || now.difference(lastTapAt).inMilliseconds > 2000) {
+      _testLogoTapCount = 1;
+    } else {
+      _testLogoTapCount += 1;
+    }
+
+    if (_testLogoTapCount < 3) {
+      return;
+    }
+    _testLogoTapCount = 0;
+
+    final movil = await _showTestMobileLookupDialog();
+    if (!mounted || movil == null || movil.trim().isEmpty) {
+      return;
+    }
+
+    await _loadTestUserByMobile(movil.trim());
+  }
+
+  Future<String?> _showTestMobileLookupDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (context) => const _TestMobileLookupDialog(),
+    );
+  }
+
+  Future<void> _loadTestUserByMobile(String movil) async {
+    setState(() {
+      _isSaving = true;
+      _serverValidationError = null;
+      _serverValidationErrors.clear();
+    });
+
+    try {
+      final existsResponse = await widget.datosServidorService
+          .yaExisteMovilUsuario(movil);
+      debugPrint('test yaExisteMovilUsuario($movil): $existsResponse');
+
+      if (!_backendResponseSaysYes(existsResponse)) {
+        _showServerValidationSnackBar('No existe ese movil en el backend.');
+        return;
+      }
+
+      final idUsuario =
+          _backendResponseField(existsResponse, 'idUsuario') ?? '';
+      if (idUsuario.isEmpty) {
+        _showServerValidationSnackBar(
+          'El backend no ha devuelto idUsuario para ese movil.',
+        );
+        return;
+      }
+
+      final information = _userInformationFromBackendResponse(
+        existsResponse,
+        fallbackIdUsuario: idUsuario,
+        fallbackTelefono: movil,
+      );
+
+      if (information == null) {
+        _showServerValidationSnackBar(
+          'No se pudieron leer los campos del usuario.',
+        );
+        return;
+      }
+
+      _fillUserInformation(information);
+      _showServerValidationSnackBar('Usuario cargado.');
+    } catch (error) {
+      debugPrint('test cargar usuario por movil fallo: $error');
+      _showServerValidationSnackBar('No se pudo cargar el usuario.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  void _fillUserInformation(_UserInformation information) {
+    for (final field in _userInformationFields) {
+      _controllers[field.key]?.text = information.valueFor(field.key);
+    }
+
+    setState(() {
+      _loadedUserId = information.idUsuario.trim();
+      _serverValidationErrors.clear();
+      _serverValidationError = null;
+    });
+  }
+
+  Future<_UserBackendSaveTarget?> _userIdForMobileBeforeSave(
     _UserInformation information,
   ) async {
     final currentUserId = information.idUsuario.trim();
@@ -8250,12 +8613,34 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
 
     final exists = _backendResponseSaysYes(response);
     if (!exists) {
-      return currentUserId;
+      return _UserBackendSaveTarget(idUsuario: currentUserId);
     }
 
     final backendUserId = _backendResponseField(response, 'idUsuario') ?? '';
-    if (backendUserId.isEmpty || backendUserId == currentUserId) {
-      return currentUserId;
+    if (backendUserId.isEmpty) {
+      const message =
+          'El movil ya existe, pero el servidor no ha devuelto idUsuario.';
+      setState(() {
+        _serverValidationError = message;
+      });
+      _showServerValidationSnackBar(message);
+      return null;
+    }
+
+    final backendInformation = _userInformationFromBackendResponse(
+      response,
+      fallbackIdUsuario: backendUserId,
+      fallbackTelefono: information.telefono,
+    );
+    final uniqueFieldsBelongToBackendUser =
+        backendInformation != null &&
+        _backendUserUniqueFieldsMatch(backendInformation, information);
+
+    if (backendUserId == currentUserId) {
+      return _UserBackendSaveTarget(
+        idUsuario: currentUserId,
+        skipUniqueValidation: uniqueFieldsBelongToBackendUser,
+      );
     }
 
     final confirmed = await _showOverwriteMobileUserDialog();
@@ -8263,7 +8648,10 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       return null;
     }
 
-    return backendUserId;
+    return _UserBackendSaveTarget(
+      idUsuario: backendUserId,
+      skipUniqueValidation: true,
+    );
   }
 
   Future<bool?> _showOverwriteMobileUserDialog() {
@@ -8273,16 +8661,16 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
       builder: (context) {
         return AlertDialog(
           content: const Text(
-            'este movil ya existe, se sobreescribiran los datos de usuario',
+            'Ya existe ese movil, quieres sobreescribir la informacion ?',
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancela'),
+              child: const Text('No'),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Adelante'),
+              child: const Text('Si'),
             ),
           ],
         );
@@ -8413,13 +8801,19 @@ class _UserInformationScreenState extends State<_UserInformationScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (widget.onCancel != null) ...[
+                          if (widget.showBackButton &&
+                              widget.onCancel != null) ...[
                             _TopLeftBackButton(
                               onPressed: _isSaving ? null : widget.onCancel,
                             ),
                             const SizedBox(height: 10),
                           ],
-                          const _GolfLogo(size: 104),
+                          modoPruebasActivo
+                              ? GestureDetector(
+                                  onTap: _handleTestLogoTap,
+                                  child: const _GolfLogo(size: 104),
+                                )
+                              : const _GolfLogo(size: 104),
                           const SizedBox(height: 16),
                           Text(
                             isEditing ? 'Mi Informacion' : 'Alta de usuario',
@@ -8665,13 +9059,184 @@ class _UserInformation {
   }
 }
 
+_UserInformation? _userInformationFromBackendResponse(
+  String response, {
+  required String fallbackIdUsuario,
+  required String fallbackTelefono,
+}) {
+  final decoded = _decodeJsonLikePayload(response.trim()) ?? response;
+  final map = _userInformationMapFromDecoded(decoded);
+  if (map == null) {
+    return null;
+  }
+
+  final information = _UserInformation(
+    idUsuario:
+        _backendMapValue(map, const ['idUsuario', 'id_usuario', 'id']) ??
+        fallbackIdUsuario,
+    alias:
+        _backendMapValue(map, const ['alias', 'usuario', 'nombreUsuario']) ??
+        '',
+    nombre: _backendMapValue(map, const ['nombre', 'name']) ?? '',
+    apellidos:
+        _backendMapValue(map, const ['apellidos', 'apellido', 'surname']) ?? '',
+    direccion:
+        _backendMapValue(map, const ['direccion', 'direccion_usuario']) ?? '',
+    cp:
+        _backendMapValue(map, const ['cp', 'codigoPostal', 'codigo_postal']) ??
+        '',
+    poblacion:
+        _backendMapValue(map, const ['poblacion', 'pobl', 'municipio']) ?? '',
+    provincia: _backendMapValue(map, const ['provincia']) ?? '',
+    telefono:
+        _backendMapValue(map, const ['telefono', 'movil', 'mobile']) ??
+        fallbackTelefono,
+    mail: _backendMapValue(map, const ['mail', 'email', 'correo']) ?? '',
+    numeroFederadoGolf:
+        _backendMapValue(map, const [
+          'numeroFederadoGolf',
+          'numero_federado_golf',
+          'numFederadoGolf',
+          'federado_golf',
+        ]) ??
+        '',
+    numeroFederadoPitchput:
+        _backendMapValue(map, const [
+          'numeroFederadoPitchput',
+          'numero_federado_pitchput',
+          'numero_federado_pitch_put',
+          'numFederadoPitchput',
+          'federado_pitchput',
+        ]) ??
+        '',
+  );
+
+  final hasProfileFields = [
+    information.alias,
+    information.nombre,
+    information.apellidos,
+    information.direccion,
+    information.cp,
+    information.poblacion,
+    information.provincia,
+    information.mail,
+    information.numeroFederadoGolf,
+    information.numeroFederadoPitchput,
+  ].any((value) => value.trim().isNotEmpty);
+
+  return hasProfileFields ? information : null;
+}
+
+bool _backendUserUniqueFieldsMatch(
+  _UserInformation backendInformation,
+  _UserInformation currentInformation,
+) {
+  var comparedAnyField = false;
+
+  final backendAlias = backendInformation.alias.trim();
+  if (backendAlias.isNotEmpty) {
+    comparedAnyField = true;
+    if (backendAlias.toLowerCase() !=
+        currentInformation.alias.trim().toLowerCase()) {
+      return false;
+    }
+  }
+
+  final backendMail = backendInformation.mail.trim();
+  if (backendMail.isNotEmpty) {
+    comparedAnyField = true;
+    if (backendMail.toLowerCase() !=
+        currentInformation.mail.trim().toLowerCase()) {
+      return false;
+    }
+  }
+
+  return comparedAnyField;
+}
+
+Map<String, dynamic>? _userInformationMapFromDecoded(Object? decoded) {
+  if (decoded is String) {
+    final trimmed = decoded.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    return _userInformationMapFromDecoded(_decodeJsonLikePayload(trimmed));
+  }
+
+  if (decoded is List) {
+    for (final item in decoded) {
+      final map = _userInformationMapFromDecoded(item);
+      if (map != null) {
+        return map;
+      }
+    }
+    return null;
+  }
+
+  if (decoded is! Map) {
+    return null;
+  }
+
+  final map = _stringKeyedMap(decoded);
+  for (final key in const [
+    'usuario',
+    'user',
+    'datos',
+    'data',
+    'registro',
+    'jugador',
+  ]) {
+    if (!map.containsKey(key)) {
+      continue;
+    }
+
+    final nestedMap = _userInformationMapFromDecoded(map[key]);
+    if (nestedMap != null) {
+      return nestedMap;
+    }
+  }
+
+  for (final key in const ['usuarios', 'users', 'registros', 'jugadores']) {
+    if (!map.containsKey(key)) {
+      continue;
+    }
+
+    final nestedMap = _userInformationMapFromDecoded(map[key]);
+    if (nestedMap != null) {
+      return nestedMap;
+    }
+  }
+
+  return map;
+}
+
+String? _backendMapValue(Map<String, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final value = map[key];
+    if (value == null) {
+      continue;
+    }
+
+    final text = '$value'.trim();
+    if (text.isNotEmpty) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
 bool _backendResponseSaysYes(String response) {
   final rpta = _backendResponseValue(response);
   if (rpta == null) {
     throw FormatException('Respuesta no valida: $response');
   }
 
-  return rpta == 'si' || rpta == 'sí';
+  final normalized = rpta.replaceAll('\u00ed', 'i');
+  return normalized == 'si' ||
+      normalized == 'si existe' ||
+      normalized == 'existe';
 }
 
 bool _backendResponseIsOk(String response) {
@@ -8724,6 +9289,16 @@ class _UserRegistrationResult {
 
   final bool isRegistered;
   final String idUsuario;
+}
+
+class _UserBackendSaveTarget {
+  const _UserBackendSaveTarget({
+    required this.idUsuario,
+    this.skipUniqueValidation = false,
+  });
+
+  final String idUsuario;
+  final bool skipUniqueValidation;
 }
 
 class _PendingLeagueInvitations {
@@ -9366,6 +9941,9 @@ String? _backendResponseValue(String response) {
   final lowerResponse = trimmedResponse.toLowerCase();
   if (lowerResponse == 'si' ||
       lowerResponse == 'sí' ||
+      lowerResponse == 'si existe' ||
+      lowerResponse == 'sí existe' ||
+      lowerResponse == 'existe' ||
       lowerResponse == 'no' ||
       lowerResponse == 'ok') {
     return lowerResponse;
@@ -9916,6 +10494,19 @@ int? _intFromBackendValue(Object? value) {
   return int.tryParse('${value ?? ''}'.trim());
 }
 
+double? _doubleFromBackendValue(Object? value) {
+  if (value is num) {
+    return value.toDouble();
+  }
+
+  final normalizedValue = '${value ?? ''}'.trim().replaceAll(',', '.');
+  if (normalizedValue.isEmpty) {
+    return null;
+  }
+
+  return double.tryParse(normalizedValue);
+}
+
 int? _parseTimeInput(String? rawValue) {
   final value = rawValue?.trim() ?? '';
   if (value.isEmpty) {
@@ -10199,6 +10790,7 @@ class _StatisticsRound {
   const _StatisticsRound({
     required this.idPartida,
     required this.dateLabel,
+    required this.presenceDay,
     required this.sortValue,
     required this.holeValues,
     required this.handicapValues,
@@ -10210,6 +10802,7 @@ class _StatisticsRound {
 
   final String idPartida;
   final String dateLabel;
+  final String presenceDay;
   final int sortValue;
   final List<String> holeValues;
   final List<String> handicapValues;
@@ -10256,6 +10849,7 @@ class _StatisticsRound {
     return _StatisticsRound(
       idPartida: _statisticsGameIdValue(payload),
       dateLabel: _statisticsDateLabel(rawDate),
+      presenceDay: _statisticsPresenceDayValue(rawDate),
       sortValue: _statisticsDateSortValue(rawDate),
       holeValues: holeValues,
       handicapValues: _statisticsHandicapValuesFromPayload(payload),
@@ -10453,6 +11047,48 @@ String _statisticsDateLabel(String rawDate) {
   return trimmedDate.isEmpty ? 'Sin fecha' : trimmedDate;
 }
 
+String _statisticsPresenceDayValue(String rawDate) {
+  final trimmedDate = rawDate.trim();
+  final isoMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(trimmedDate);
+  if (isoMatch != null) {
+    return '${isoMatch.group(1)!.substring(2)}'
+        '${isoMatch.group(2)}'
+        '${isoMatch.group(3)}';
+  }
+
+  final displayMatch = RegExp(
+    r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})',
+  ).firstMatch(trimmedDate);
+  if (displayMatch != null) {
+    final day = int.tryParse(displayMatch.group(1)!);
+    final month = int.tryParse(displayMatch.group(2)!);
+    final yearValue = displayMatch.group(3)!;
+    final year = int.tryParse(yearValue);
+    if (day != null &&
+        month != null &&
+        year != null &&
+        day >= 1 &&
+        day <= 31 &&
+        month >= 1 &&
+        month <= 12) {
+      final twoDigitYear = yearValue.length == 2 ? year : year % 100;
+      return '${_twoDigits(twoDigitYear)}${_twoDigits(month)}'
+          '${_twoDigits(day)}';
+    }
+  }
+
+  final digits = trimmedDate.replaceAll(RegExp(r'\D'), '');
+  if (digits.length >= 8 && digits.startsWith('20')) {
+    return digits.substring(2, 8);
+  }
+
+  if (digits.length >= 6) {
+    return digits.substring(0, 6);
+  }
+
+  return '';
+}
+
 int _statisticsDateSortValue(String rawDate) {
   final trimmedDate = rawDate.trim();
   final isoMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(trimmedDate);
@@ -10614,6 +11250,9 @@ String _createPlayRowsJsonForPlayers(
       for (var holeIndex = 0; holeIndex < 18; holeIndex++)
         'hoyo_${holeIndex + 1}':
             '${existingRow?['hoyo_${holeIndex + 1}'] ?? ''}',
+      for (var holeIndex = 0; holeIndex < 18; holeIndex++)
+        'hoyo_${holeIndex + 1}_hora':
+            '${existingRow?['hoyo_${holeIndex + 1}_hora'] ?? ''}',
     };
   });
 
@@ -10871,6 +11510,21 @@ Map<String, dynamic> _remotePlayRowPreservingLocalPair({
   final currentPair = _playRowPairNumber(currentRow);
   if (!remoteHasPair && currentPair > 0) {
     mergedRow['pareja'] = '$currentPair';
+  }
+
+  for (var holeIndex = 0; holeIndex < 18; holeIndex++) {
+    final hole = holeIndex + 1;
+    final scoreKey = 'hoyo_$hole';
+    final timeKey = 'hoyo_${hole}_hora';
+    if (remoteRow.containsKey(timeKey)) {
+      continue;
+    }
+
+    final remoteScore = '${remoteRow[scoreKey] ?? ''}';
+    final currentScore = '${currentRow[scoreKey] ?? ''}';
+    mergedRow[timeKey] = remoteScore == currentScore
+        ? '${currentRow[timeKey] ?? ''}'
+        : '';
   }
 
   return mergedRow;
